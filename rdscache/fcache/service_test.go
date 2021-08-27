@@ -35,24 +35,6 @@ func TestMain(m *testing.M) {
 }
 
 //nolint:typecheck
-func Test_fCacheService_Del(t *testing.T) {
-	Convey("删除缓存", t, func() {
-		v := "test"
-		_, err := rds.Set(rk, v, 0).Result()
-		So(err, ShouldBeNil)
-		res, err := rds.Get(rk).Result()
-		So(err, ShouldBeNil)
-		So(res, ShouldEqual, v)
-
-		err = fcSvc.Del(ctx, rk)
-		So(err, ShouldBeNil)
-		res, err = rds.Get(rk).Result()
-		So(err, ShouldEqual, redis.Nil)
-		So(res, ShouldEqual, "")
-	})
-}
-
-//nolint:typecheck
 func Test_fCacheService_GetFromString(t *testing.T) {
 
 	Convey("从string中获取缓存", t, func() {
@@ -294,7 +276,7 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			So(ret, ShouldEqual, "null")
 			So(err, ShouldBeNil)
 			// 从缓存中获取下，缓存将不存在
-			tmp, err := fcSvc.rds.HGet(rk, sk).Result()
+			tmp, err := rds.HGet(rk, sk).Result()
 			So(err, ShouldBeNil)
 			So(tmp, ShouldEqual, "null")
 		})

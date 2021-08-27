@@ -11,6 +11,10 @@ import (
 	json "github.com/json-iterator/go"
 )
 
+type IFuncCacheSvc interface {
+	Get(ctx context.Context, fc *fCache, data interface{}, cacheFunc CF) (string, error)
+}
+
 type CF func() (interface{}, error)
 
 type fCacheService struct {
@@ -18,7 +22,6 @@ type fCacheService struct {
 }
 
 // Get 从缓存中获取缓存内容, 缓存如果不存在则将函数结果保存至缓存
-// 需要将结果反序列化到data中时，data必须和cacheFunc返回类型一致！
 func (s *fCacheService) Get(ctx context.Context, fc *fCache, data interface{}, cacheFunc CF) (string, error) {
 	// 前置校验
 	if fc.needUnMarshal && data == nil {
@@ -123,7 +126,7 @@ func (s *fCacheService) set(ctx context.Context, fc *fCache, res interface{}) (s
 		return "", err
 	}
 
-	if (res == nil || res != nil && reflect.ValueOf(res).IsZero()) && !fc.needCacheZero {
+	if (res == nil || reflect.ValueOf(res).IsZero()) && !fc.needCacheZero {
 		return "", nil
 	}
 
@@ -159,13 +162,7 @@ func (s *fCacheService) setToHash(
 	return err
 }
 
-// Del 清除缓存
-func (s *fCacheService) Del(ctx context.Context, rk string) error {
-	_, err := s.rds.Del(rk).Result()
-	return err
-}
-
-func NewFCacheService(rds *redis.Client) (*fCacheService, error) {
+func NewFCacheService(rds *redis.Client) (IFuncCacheSvc, error) {
 	if rds == nil {
 		return nil, errors.New("redis must not nil")
 	}
