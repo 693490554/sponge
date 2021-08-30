@@ -21,7 +21,7 @@ var (
 	fcSvc, _ = NewFCacheService(rds)
 	rk       = "test"
 	sk       = "subKey"
-	lock     = &sync.RWMutex{}
+	lock     = &sync.Mutex{}
 )
 
 func delTestData() {
@@ -40,27 +40,22 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 	Convey("从string中获取缓存", t, func() {
 		// todo fc为整个测试用例所需要的参数，每执行完下面的一个convey，都会回到这里再重新执行初始化，然后执行下一个convey!
 		// todo 执行流程并不是从上到下一次性运行完！
-		fc, err := NewFCache(rk, common.KTOfString)
-		So(err, ShouldBeNil)
-		So(fc, ShouldNotBeNil)
+		cacheInfo := common.NewStringCache(rk, 0)
 		delTestData()
 
-		Convey("非法KT", func() {
-			_, err := NewFCache(rk, 9999)
-			So(err, ShouldNotBeNil)
-		})
-
-		Convey("需要反序列化到data，但是data为nil的情况", func() {
-			fc.ApplyOption(WithNeedUnMarshal())
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("需要反序列化到data:函数返回结果为nil", func() {
+			var data *struct{}
+			So(data, ShouldBeNil)
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
-			})
+			}, WithUnMarshalData(data))
 			So(ret, ShouldEqual, "")
-			So(err, ShouldNotBeNil)
+			So(err, ShouldEqual, DataNotExistsErr)
+			So(data, ShouldBeNil)
 		})
 
-		Convey("首次获取,函数无error并且返回nil,无需缓存零值的情况", func() {
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数无error并且返回nil:无需缓存零值的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
 			})
 			So(ret, ShouldEqual, "")
@@ -71,11 +66,10 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			So(tmp, ShouldEqual, "")
 		})
 
-		Convey("首次获取,函数无error并且返回nil,需缓存零值的情况", func() {
-			fc.ApplyOption(WithNeedCacheZero())
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数无error并且返回nil:需缓存零值的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
-			})
+			}, WithNeedCacheZero())
 			So(ret, ShouldEqual, "null")
 			So(err, ShouldBeNil)
 			// 从缓存中获取下，缓存将不存在
@@ -84,16 +78,16 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			So(tmp, ShouldEqual, "null")
 		})
 
-		Convey("首次获取,函数返回error的情况", func() {
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数返回error的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, errors.New("")
 			})
 			So(ret, ShouldEqual, "")
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("首次获取, 函数正常返回struct，不需要序列化到data的情况", func() {
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数正常返回struct:不需要序列化到data的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return struct {
 					A int
 					B string
@@ -107,19 +101,17 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 		})
 
 		Convey("首次获取:函数正常返回struct:存在lock:需要序列化到data", func() {
-			fc.ApplyOption(WithNeedUnMarshal())
-			fc.ApplyOption(WithLock(lock))
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
 			}
 			data := &testS{}
 			funcRet := &testS{1, "test"}
-			ret, err := fcSvc.Get(ctx, fc, data, func() (interface{}, error) {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return funcRet, nil
-			})
-			So(ret, ShouldNotEqual, "")
+			}, WithUnMarshalData(data), WithLock(lock))
 			So(err, ShouldBeNil)
+			So(ret, ShouldNotEqual, "")
 			So(data.A, ShouldEqual, 1)
 			So(data.B, ShouldEqual, "test")
 			tmp, err := rds.Get(rk).Result()
@@ -132,12 +124,10 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 		})
 
 		Convey("获取2次:函数正常返回struct:存在lock:需要反序列化", func() {
-			fc.ApplyOption(WithNeedUnMarshal())
 			tmp, err := rds.Get(rk).Result()
 			So(err, ShouldEqual, redis.Nil)
 			So(tmp, ShouldEqual, "")
 
-			fc.ApplyOption(WithLock(lock))
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
@@ -145,9 +135,9 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			data := &testS{}
 			funcRet := &testS{1, "test"}
 			for i := 1; i <= 2; i++ {
-				ret, err := fcSvc.Get(ctx, fc, data, func() (interface{}, error) {
+				ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 					return funcRet, nil
-				})
+				}, WithUnMarshalData(data), WithLock(lock))
 				So(ret, ShouldNotEqual, "")
 				So(err, ShouldBeNil)
 				So(data.A, ShouldEqual, 1)
@@ -158,17 +148,44 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			So(tmp, ShouldNotEqual, "")
 		})
 
-		Convey("首次获取:函数正常返回struct:存在lock:设过期时间", func() {
-			fc.ApplyOption(WithLock(lock))
-			fc.ApplyOption(WithExpTime(time.Second * 5))
+		Convey("获取2次:存在lock:lock先上锁:模拟并发获取", func() {
+
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
 			}
 			funcRet := &testS{1, "test"}
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+			lock.Lock()
+			go func() {
+				time.Sleep(time.Second)
+				// 1秒后释放锁，会有2个协程竞争获取锁
+				lock.Unlock()
+			}()
+			go func() {
+				_, _ = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+					return funcRet, nil
+				}, WithLock(lock))
+			}()
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return funcRet, nil
-			})
+			}, WithLock(lock))
+			So(ret, ShouldNotEqual, "")
+			So(err, ShouldBeNil)
+			tmp, err := rds.Get(rk).Result()
+			So(err, ShouldBeNil)
+			So(tmp, ShouldNotEqual, "")
+		})
+
+		Convey("首次获取:函数正常返回struct:存在lock:设过期时间", func() {
+			cacheInfo.ExpTime = time.Second * 5
+			type testS struct {
+				A int    `json:"a"`
+				B string `json:"b"`
+			}
+			funcRet := &testS{1, "test"}
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return funcRet, nil
+			}, WithLock(lock))
 			So(ret, ShouldNotEqual, "")
 			So(err, ShouldBeNil)
 			tmp, err := rds.Get(rk).Result()
@@ -181,20 +198,19 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 		})
 
 		Convey("函数正常返回struct:存在lock:lock被锁", func() {
-			fc.ApplyOption(WithLock(lock))
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
 			}
 			funcRet := &testS{1, "test"}
-			fc.lock.Lock()
+			lock.Lock()
 			nowTs := time.Now().Unix()
 			newCtx, cFunc := context.WithTimeout(context.Background(), time.Second*2)
 			defer cFunc()
 			go func() {
-				_, _ = fcSvc.Get(newCtx, fc, nil, func() (interface{}, error) {
+				_, _ = fcSvc.GetOrCreate(newCtx, cacheInfo, func() (interface{}, error) {
 					return funcRet, nil
-				})
+				}, WithLock(lock))
 			}()
 		HERE:
 			for range newCtx.Done() {
@@ -207,8 +223,8 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			_, err := rds.Get(rk).Result()
 			So(err, ShouldEqual, redis.Nil)
 			// 释放锁后可正常获取
-			fc.lock.Unlock()
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+			lock.Unlock()
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return funcRet, nil
 			})
 			So(ret, ShouldNotEqual, "")
@@ -225,21 +241,7 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 func Test_fCacheService_GetFromHash(t *testing.T) {
 	Convey("从hash中获取缓存", t, func() {
 		delTestData()
-		fc, err := NewFCache(rk, common.KTOfHash, WithSK(sk))
-		So(err, ShouldBeNil)
-		So(fc, ShouldNotBeNil)
-
-		Convey("初始化不带sk", func() {
-			tmp, err := NewFCache(rk, common.KTOfHash)
-			So(err, ShouldNotBeNil)
-			So(tmp, ShouldBeNil)
-		})
-
-		Convey("redis key为空", func() {
-			tmp, err := NewFCache("", common.KTOfHash)
-			So(err, ShouldNotBeNil)
-			So(tmp, ShouldBeNil)
-		})
+		cacheInfo := common.NewHashCache(rk, sk, 0)
 
 		Convey("fCacheService未传入rds", func() {
 			tmp, err := NewFCacheService(nil)
@@ -247,17 +249,8 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			So(tmp, ShouldBeNil)
 		})
 
-		Convey("需要反序列化到data，但是data为nil的情况", func() {
-			fc.ApplyOption(WithNeedUnMarshal())
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
-				return nil, nil
-			})
-			So(ret, ShouldEqual, "")
-			So(err, ShouldNotBeNil)
-		})
-
-		Convey("首次获取,函数无error并且返回nil,无需缓存零值的情况", func() {
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数无error并且返回nil:无需缓存零值的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
 			})
 			So(ret, ShouldEqual, "")
@@ -268,29 +261,36 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			So(tmp, ShouldEqual, "")
 		})
 
-		Convey("首次获取,函数无error并且返回nil,需缓存零值的情况", func() {
-			fc.ApplyOption(WithNeedCacheZero())
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("获取2次:函数无error并且返回nil:需缓存零值的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
-			})
-			So(ret, ShouldEqual, "null")
+			}, WithNeedCacheZero())
+			So(ret, ShouldEqual, "")
+			// 因为不需要序列化到data，所以没有返回data不存在的error
 			So(err, ShouldBeNil)
 			// 从缓存中获取下，缓存将不存在
 			tmp, err := rds.HGet(rk, sk).Result()
 			So(err, ShouldBeNil)
-			So(tmp, ShouldEqual, "null")
+			So(tmp, ShouldEqual, "")
+
+			// 在获取一次
+			ret, err = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return nil, nil
+			}, WithNeedCacheZero())
+			So(ret, ShouldEqual, "")
+			So(err, ShouldEqual, DataNotExistsErr)
 		})
 
-		Convey("首次获取,函数返回error的情况", func() {
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数返回error的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, errors.New("")
 			})
 			So(ret, ShouldEqual, "")
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("首次获取, 函数正常返回struct，不需要序列化到data的情况", func() {
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+		Convey("首次获取:函数正常返回struct:不需要序列化到data的情况", func() {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return struct {
 					A int
 					B string
@@ -304,17 +304,15 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 		})
 
 		Convey("首次获取:函数正常返回struct:存在lock:需要序列化到data", func() {
-			fc.ApplyOption(WithNeedUnMarshal())
-			fc.ApplyOption(WithLock(lock))
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
 			}
 			data := &testS{}
 			funcRet := &testS{1, "test"}
-			ret, err := fcSvc.Get(ctx, fc, data, func() (interface{}, error) {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return funcRet, nil
-			})
+			}, WithUnMarshalData(data), WithLock(lock))
 			So(ret, ShouldNotEqual, "")
 			So(err, ShouldBeNil)
 			So(data.A, ShouldEqual, 1)
@@ -329,12 +327,10 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 		})
 
 		Convey("获取2次:函数正常返回struct:存在lock:需要反序列化", func() {
-			fc.ApplyOption(WithNeedUnMarshal())
 			tmp, err := rds.HGet(rk, sk).Result()
 			So(err, ShouldEqual, redis.Nil)
 			So(tmp, ShouldEqual, "")
 
-			fc.ApplyOption(WithLock(lock))
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
@@ -342,9 +338,9 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			data := &testS{}
 			funcRet := &testS{1, "test"}
 			for i := 1; i <= 2; i++ {
-				ret, err := fcSvc.Get(ctx, fc, data, func() (interface{}, error) {
+				ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 					return funcRet, nil
-				})
+				}, WithUnMarshalData(data), WithLock(lock))
 				So(ret, ShouldNotEqual, "")
 				So(err, ShouldBeNil)
 				So(data.A, ShouldEqual, 1)
@@ -356,16 +352,15 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 		})
 
 		Convey("首次获取:函数正常返回struct:存在lock:设过期时间", func() {
-			fc.ApplyOption(WithLock(lock))
-			fc.ApplyOption(WithExpTime(time.Second * 5))
+			cacheInfo.ExpTime = time.Second * 5
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
 			}
 			funcRet := &testS{1, "test"}
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return funcRet, nil
-			})
+			}, WithLock(lock))
 			So(ret, ShouldNotEqual, "")
 			So(err, ShouldBeNil)
 			tmp, err := rds.HGet(rk, sk).Result()
@@ -378,20 +373,19 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 		})
 
 		Convey("函数正常返回struct:存在lock:lock被锁", func() {
-			fc.ApplyOption(WithLock(lock))
 			type testS struct {
 				A int    `json:"a"`
 				B string `json:"b"`
 			}
 			funcRet := &testS{1, "test"}
-			fc.lock.Lock()
+			lock.Lock()
 			nowTs := time.Now().Unix()
 			newCtx, cFunc := context.WithTimeout(context.Background(), time.Second*2)
 			defer cFunc()
 			go func() {
-				_, _ = fcSvc.Get(newCtx, fc, nil, func() (interface{}, error) {
+				_, _ = fcSvc.GetOrCreate(newCtx, cacheInfo, func() (interface{}, error) {
 					return funcRet, nil
-				})
+				}, WithLock(lock))
 			}()
 		HERE:
 			for range newCtx.Done() {
@@ -404,8 +398,8 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			_, err := rds.HGet(rk, sk).Result()
 			So(err, ShouldEqual, redis.Nil)
 			// 释放锁后可正常获取
-			fc.lock.Unlock()
-			ret, err := fcSvc.Get(ctx, fc, nil, func() (interface{}, error) {
+			lock.Unlock()
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return funcRet, nil
 			})
 			So(ret, ShouldNotEqual, "")
@@ -414,6 +408,5 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(ret, ShouldNotEqual, "")
 		})
-
 	})
 }
