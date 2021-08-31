@@ -3,7 +3,7 @@ package fcache
 import (
 	"context"
 	"errors"
-	"reflect"
+	"sponge/rdscache"
 	"sponge/rdscache/common"
 	"time"
 
@@ -11,8 +11,10 @@ import (
 	json "github.com/json-iterator/go"
 )
 
-var DataNotExistsErr = errors.New("data not exists")
-
+// CF 需要缓存的函数闭包
+// @return interface{}: 函数返回值
+// @return error: 函数错误信息, 如果数据不存在需要返回ErrNoData
+// ErrNoData搭配可选项: WithNeedCacheNoData一起使用，预防缓存穿透
 type CF func() (interface{}, error)
 
 type IFuncCacheSvc interface {
@@ -53,35 +55,47 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 		}
 	}
 
+	var noDataErr error
 	// 从函数中获取缓存
 	funcRes, err := cacheFunc()
-	if err != nil {
+	if err != nil && err != rdscache.ErrNoData {
 		return "", err
+	}
+	if err == rdscache.ErrNoData {
+		noDataErr = rdscache.ErrNoData
+	}
+
+	// 不需要缓存无数据
+	if noDataErr != nil && !options.needCacheNoData {
+		return "", noDataErr
+	}
+	var cacheStr string
+	// 数据不存在缓存空字符串
+	if noDataErr == nil {
+		cacheStr, err = json.MarshalToString(funcRes)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	// 放入缓存中
-	ret, err := s.set(ctx, cacheInfo, funcRes, options)
+	err = s.set(ctx, cacheInfo, cacheStr)
 	if err != nil {
 		return "", err
 	}
 
-	// 不需要反序列化到data直接返回
-	if options.data == nil {
-		return ret, nil
-	}
-
-	// 函数返回结果为nil或零值直接返回无数据异常
-	if funcRes == nil || reflect.ValueOf(funcRes).IsZero() {
-		return "", DataNotExistsErr
+	// 不需要反序列化到data或无数据直接返回
+	if options.data == nil || noDataErr != nil {
+		return cacheStr, noDataErr
 	}
 
 	// 首次放入缓存需要反序列化在这里进行
-	err = json.UnmarshalFromString(ret, options.data)
+	err = json.UnmarshalFromString(cacheStr, options.data)
 	if err != nil {
 		return "", err
 	}
 
-	return ret, nil
+	return cacheStr, nil
 }
 
 // getNeedReturn 从缓存中获取后，根据第一个值来判断是否需要直接返回结果
@@ -94,8 +108,8 @@ func (s *fCacheService) getNeedReturn(ctx context.Context, cacheInfo common.ICac
 	}
 
 	// 缓存了空返回无数据异常
-	if res == "" && err != redis.Nil {
-		return true, "", DataNotExistsErr
+	if res == "" && err == nil {
+		return true, "", rdscache.ErrNoData
 	}
 
 	// 缓存结果不为空或者为空(特意缓存空信息，预防缓存穿透), 直接返回
@@ -139,34 +153,18 @@ func (s *fCacheService) getFromHash(ctx context.Context, key string, sk string) 
 
 // set 在redis中缓存数据
 func (s *fCacheService) set(
-	ctx context.Context, cacheInfo interface{}, res interface{}, options *fCacheOption) (string, error) {
-
-	resIsZero := res == nil || reflect.ValueOf(res).IsZero()
-
+	ctx context.Context, cacheInfo interface{}, cacheStr string) error {
 	var err error
-	var resStr string
-	// res非nil并且非0值才要序列化为str
-	if !resIsZero {
-		resStr, err = json.MarshalToString(res)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	// 无需缓存nil或零值，直接返回
-	if resIsZero && !options.needCacheZero {
-		return "", nil
-	}
 
 	switch cacheInfo := cacheInfo.(type) {
 	case *common.StringCache:
-		err = s.setToString(ctx, cacheInfo.Key, resStr, cacheInfo.ExpTime)
+		err = s.setToString(ctx, cacheInfo.Key, cacheStr, cacheInfo.ExpTime)
 	case *common.HashCache:
-		err = s.setToHash(ctx, cacheInfo.Key, cacheInfo.SubKey, resStr, cacheInfo.ExpTime)
+		err = s.setToHash(ctx, cacheInfo.Key, cacheInfo.SubKey, cacheStr, cacheInfo.ExpTime)
 	default:
-		return "", errors.New("unknown KT")
+		err = errors.New("unknown KT")
 	}
-	return resStr, err
+	return err
 }
 
 // setToString 向string中设置缓存数据

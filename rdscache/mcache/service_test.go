@@ -3,6 +3,7 @@ package mcache
 import (
 	"context"
 	"os"
+	"sponge/rdscache"
 	"sponge/rdscache/common"
 	"sync"
 	"testing"
@@ -60,7 +61,7 @@ func (m *TestHashModel) CacheInfo() common.ICacheInfo {
 }
 
 func (m *TestHashModel) GetOri() (ICacheModel, error) {
-	return nil, nil
+	return nil, rdscache.ErrNoData
 }
 
 func (m *TestHashModel) Marshal() (string, error) {
@@ -80,87 +81,60 @@ func TestMain(m *testing.M) {
 func Test_mCacheService_Set(t *testing.T) {
 	Convey("string的model缓存", t, func() {
 		delTestData()
-		cacheInfo := (&TestStringModel{}).CacheInfo()
+		cacheStr, _ := (&TestStringModel{}).Marshal()
 
-		Convey("传入nil", func() {
-			err := mcSvc.Set(ctx, nil, cacheInfo)
+		Convey("不存在过期时间", func() {
+			cacheInfo := (&TestStringModel{}).CacheInfo()
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
 			So(err, ShouldBeNil)
 			v, err := rds.Get(key).Result()
-			So(v, ShouldEqual, "")
+			So(v, ShouldEqual, cacheStr)
 			So(err, ShouldBeNil)
+			ttl, _ := rds.TTL(key).Result()
+			So(ttl, ShouldEqual, -1*time.Second)
 		})
 
-		Convey("nil指针", func() {
-			var data *TestStringModel
-			err := mcSvc.Set(ctx, data, cacheInfo)
+		Convey("存在过期时间", func() {
+			expTime = 10 * time.Second
+			cacheInfo := (&TestStringModel{}).CacheInfo()
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
 			So(err, ShouldBeNil)
-
 			v, err := rds.Get(key).Result()
-			So(v, ShouldEqual, "")
+			So(v, ShouldEqual, cacheStr)
 			So(err, ShouldBeNil)
+			ttl, _ := rds.TTL(key).Result()
+			So(ttl, ShouldBeGreaterThan, 9*time.Second)
+			expTime = 0 // 还原全局变量
 		})
 
-		Convey("空指针", func() {
-			data := &TestStringModel{}
-			err := mcSvc.Set(ctx, data, cacheInfo)
-			So(err, ShouldBeNil)
-
-			v, err := rds.Get(key).Result()
-			So(v, ShouldEqual, `{"a":0}`) // 空指针不是零值
-			So(err, ShouldBeNil)
-		})
-
-		Convey("非空指针", func() {
-			data := &TestStringModel{A: testModelAValue}
-			err := mcSvc.Set(ctx, data, cacheInfo)
-			So(err, ShouldBeNil)
-
-			v, err := rds.Get(key).Result()
-			So(v, ShouldEqual, `{"a":1}`)
-			So(err, ShouldBeNil)
-		})
 	})
 
 	Convey("hash的model缓存", t, func() {
 		delTestData()
-		cacheInfo := (&TestHashModel{}).CacheInfo()
+		expTime = 0
+		cacheStr, _ := (&TestHashModel{}).Marshal()
 
-		Convey("传入nil", func() {
-			err := mcSvc.Set(ctx, nil, cacheInfo)
+		Convey("不存在过期时间", func() {
+			cacheInfo := (&TestHashModel{}).CacheInfo()
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
 			So(err, ShouldBeNil)
 			v, err := rds.HGet(key, subKey).Result()
-			So(v, ShouldEqual, "")
+			So(v, ShouldEqual, cacheStr)
 			So(err, ShouldBeNil)
+			ttl, _ := rds.TTL(key).Result()
+			So(ttl, ShouldEqual, -1*time.Second)
 		})
 
-		Convey("nil指针", func() {
-			var data *TestHashModel
-			err := mcSvc.Set(ctx, data, cacheInfo)
+		Convey("存在过期时间", func() {
+			expTime = 10 * time.Second
+			cacheInfo := (&TestHashModel{}).CacheInfo()
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
 			So(err, ShouldBeNil)
-
 			v, err := rds.HGet(key, subKey).Result()
-			So(v, ShouldEqual, "")
+			So(v, ShouldEqual, cacheStr)
 			So(err, ShouldBeNil)
-		})
-
-		Convey("空指针", func() {
-			data := &TestHashModel{}
-			err := mcSvc.Set(ctx, data, cacheInfo)
-			So(err, ShouldBeNil)
-
-			v, err := rds.HGet(key, subKey).Result()
-			So(v, ShouldEqual, `{"a":0}`) // 空指针不是零值
-			So(err, ShouldBeNil)
-		})
-
-		Convey("非空指针", func() {
-			data := &TestHashModel{A: testModelAValue}
-			err := mcSvc.Set(ctx, data, cacheInfo)
-			So(err, ShouldBeNil)
-
-			v, err := rds.HGet(key, subKey).Result()
-			So(v, ShouldEqual, `{"a":1}`)
-			So(err, ShouldBeNil)
+			ttl, _ := rds.TTL(key).Result()
+			So(ttl, ShouldBeGreaterThan, 9*time.Second)
 		})
 
 	})
@@ -171,7 +145,7 @@ func Test_mCacheService_GetOrCreate(t *testing.T) {
 		delTestData()
 		Convey("传入nil", func() {
 			err := mcSvc.GetOrCreate(ctx, nil)
-			So(err, ShouldNotBeNil)
+			So(err, ShouldEqual, rdscache.ErrModuleMustNotNil)
 		})
 
 		Convey("首次获取:model=nil指针", func() {
@@ -187,8 +161,7 @@ func Test_mCacheService_GetOrCreate(t *testing.T) {
 			So(dur, ShouldEqual, time.Duration(-1)*time.Second)
 		})
 
-		Convey("2次获取:带锁:第一次锁住:缓存存在过期时间", func() {
-			expTime = time.Second * 10
+		Convey("2次获取:带锁:第一次锁住", func() {
 			var data *TestStringModel
 			lock.Lock()
 			newCtx, cancel := context.WithTimeout(context.Background(), time.Second*2) // 两秒后超时
@@ -217,11 +190,6 @@ func Test_mCacheService_GetOrCreate(t *testing.T) {
 			v, err := rds.Get(key).Result()
 			So(v, ShouldEqual, `{"a":1}`)
 			So(err, ShouldBeNil)
-			// check下缓存过期时间
-			dur, err := rds.TTL(key).Result()
-			So(err, ShouldBeNil)
-			So(dur, ShouldBeGreaterThan, time.Duration(0))
-			expTime = time.Duration(0) // 还原
 		})
 
 		Convey("2次获取:带锁:正常获取", func() {
@@ -276,37 +244,31 @@ func Test_mCacheService_GetOrCreateUseHash(t *testing.T) {
 		delTestData()
 		Convey("传入nil", func() {
 			err := mcSvc.GetOrCreate(ctx, nil)
-			So(err, ShouldNotBeNil)
+			So(err, ShouldEqual, rdscache.ErrModuleMustNotNil)
 		})
 
-		Convey("3次获取:第1次不需要缓存空数据:第2次需要缓存空数据+过期时间", func() {
+		Convey("3次获取:第1次不需要缓存空数据:第2次需要缓存空数据", func() {
 			var data TestHashModel
 			err := mcSvc.GetOrCreate(ctx, &data)
 			// hash的获取原始数据方法固定返回nil, nil
-			So(err, ShouldEqual, DataNotExistsErr)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			_, err = rds.HGet(key, subKey).Result()
 			So(err, ShouldEqual, redis.Nil)
 			// 第二次获取，将空缓存下来
-			expTime = time.Second * 5
-			err = mcSvc.GetOrCreate(ctx, &data, WithNeedCacheZero())
-			So(err, ShouldEqual, DataNotExistsErr)
+			err = mcSvc.GetOrCreate(ctx, &data, WithNeedCacheNoData())
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			v, err := rds.HGet(key, subKey).Result()
 			So(err, ShouldBeNil)
 			So(v, ShouldEqual, "")
-			dur, err := rds.TTL(key).Result()
-			So(err, ShouldBeNil)
-			So(dur, ShouldBeGreaterThan, 4*time.Second)
-			expTime = 0 //还原
 			// 第三次获取
-			err = mcSvc.GetOrCreate(ctx, &data, WithNeedCacheZero())
-			So(err, ShouldEqual, DataNotExistsErr)
+			err = mcSvc.GetOrCreate(ctx, &data, WithNeedCacheNoData())
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			v, err = rds.HGet(key, subKey).Result()
 			So(err, ShouldBeNil)
 			So(v, ShouldEqual, "")
 		})
 
-		Convey("2次获取:带锁:第一次锁住:缓存存在过期时间", func() {
-			expTime = time.Second * 10
+		Convey("2次获取:带锁:第一次锁住", func() {
 			var data TestHashModel
 			lock.Lock()
 			newCtx, cancel := context.WithTimeout(context.Background(), time.Second*2) // 两秒后超时
@@ -330,7 +292,7 @@ func Test_mCacheService_GetOrCreateUseHash(t *testing.T) {
 			// 因为ctx取消后函数内部并没有实现中断, 清理数据假定为中断没继续运行``
 			delTestData()
 			err := mcSvc.GetOrCreate(ctx, &data, WithLock(lock))
-			So(err, ShouldEqual, DataNotExistsErr)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			// 未设置缓存零值，缓存中无数据
 			_, err = rds.HGet(key, subKey).Result()
 			So(err, ShouldEqual, redis.Nil)
@@ -340,14 +302,14 @@ func Test_mCacheService_GetOrCreateUseHash(t *testing.T) {
 			var data *TestHashModel
 			// 第一次获取，直接获取原始数据
 			err := mcSvc.GetOrCreate(ctx, data, WithLock(lock))
-			So(err, ShouldEqual, DataNotExistsErr)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			// 未设置缓存零值，缓存中无数据
 			_, err = rds.HGet(key, subKey).Result()
 			So(err, ShouldEqual, redis.Nil)
 
 			// 第二次获取会从缓存中获取数据
 			err = mcSvc.GetOrCreate(ctx, data, WithLock(lock))
-			So(err, ShouldEqual, DataNotExistsErr)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 		})
 	})
 }

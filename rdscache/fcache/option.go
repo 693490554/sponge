@@ -6,8 +6,8 @@ import (
 
 // fCacheOption 函数缓存可选项
 type fCacheOption struct {
-	lock          sync.Locker // 预防缓存击穿时，需要传入lock
-	needCacheZero bool        // 是否需要缓存函数返回结果的零值，默认不需要
+	lock            sync.Locker // 预防缓存击穿时，需要传入lock
+	needCacheNoData bool        // 是否需要缓存函数不存在数据的情况，默认不需要
 	// todo: data需传入非nil指针, 如果为nil反序列化将失败
 	data interface{} // data != nil 代表需要将结果UnMarshal到data中
 }
@@ -29,10 +29,10 @@ func WithLock(lock sync.Locker) FCOptionWrap {
 	}
 }
 
-// WithNeedCacheZero 需要缓存函数返回的零值
-func WithNeedCacheZero() FCOptionWrap {
+// WithNeedCacheNoData 需要缓存数据不存在，预防缓存穿透
+func WithNeedCacheNoData() FCOptionWrap {
 	return func(option *fCacheOption) {
-		option.needCacheZero = true
+		option.needCacheNoData = true
 	}
 }
 

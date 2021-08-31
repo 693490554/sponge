@@ -6,8 +6,8 @@ import (
 
 // MCOption model缓存可选项
 type MCOption struct {
-	lock          sync.Locker // 需要预防缓存击穿时，传入lock
-	needCacheZero bool        // 是否需要缓存零值，默认不需要
+	lock            sync.Locker // 需要预防缓存击穿时，传入lock
+	needCacheNoData bool        // 是否需要缓存无数据的情况
 }
 
 func NewMCOption(opts ...MCOptionWrap) *MCOption {
@@ -26,8 +26,8 @@ func WithLock(lock sync.Locker) MCOptionWrap {
 	}
 }
 
-func WithNeedCacheZero() MCOptionWrap {
+func WithNeedCacheNoData() MCOptionWrap {
 	return func(o *MCOption) {
-		o.needCacheZero = true
+		o.needCacheNoData = true
 	}
 }

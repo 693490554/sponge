@@ -3,22 +3,20 @@ package mcache
 import (
 	"context"
 	"errors"
-	"reflect"
+	"sponge/rdscache"
 	"sponge/rdscache/common"
 	"time"
 
 	"github.com/go-redis/redis"
 )
 
-var DataNotExistsErr = errors.New("model data not exists")
-
 type IModelCacheSvc interface {
 	// 从缓存中获取model, 如果不存在则获取原始数据并放入缓存中
 	// 从缓存获取到的数据，或者第一次从数据源中获取到的数据，通过model的UnMarshal方法反序列化到model中
-	// todo 如果缓存了""，或者数据源返回nil，则返回数据不存在错误信息
+	// todo 如果缓存了""，或者数据源返回不存在数据，则返回ErrNoData
 	GetOrCreate(ctx context.Context, model ICacheModel, opts ...MCOptionWrap) error
 	// 将model保存至缓存中
-	Set(ctx context.Context, model ICacheModel, cacheInfo common.ICacheInfo) error
+	Set(ctx context.Context, cacheInfo common.ICacheInfo, cacheStr string) error
 }
 
 type mCacheService struct {
@@ -27,7 +25,7 @@ type mCacheService struct {
 
 func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts ...MCOptionWrap) error {
 	if model == nil {
-		return errors.New("model must not nil")
+		return rdscache.ErrModuleMustNotNil
 	}
 
 	option := NewMCOption(opts...)
@@ -35,11 +33,8 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 
 	// 从缓存中获取
 	needReturn, err := s.getNeedReturn(ctx, cacheInfo, model)
-	if err != nil {
-		return err
-	}
 	if needReturn {
-		return nil
+		return err
 	}
 
 	// 需要预防缓存击穿
@@ -49,38 +44,41 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 
 		// 拿到锁后再从缓存中获取下
 		needReturn, err = s.getNeedReturn(ctx, cacheInfo, model)
-		if err != nil {
-			return err
-		}
 		if needReturn {
-			return nil
+			return err
 		}
 	}
 
 	// 不存在则获取数据源
+	var noDataErr error
 	oriData, err := model.GetOri()
-	if err != nil {
+	if err != nil && err != rdscache.ErrNoData {
 		return err
+	}
+	if err == rdscache.ErrNoData {
+		noDataErr = rdscache.ErrNoData
 	}
 
 	// 不需要缓存零值直接返回
-	if (oriData == nil || reflect.ValueOf(oriData).IsZero()) && !option.needCacheZero {
+	if noDataErr != nil && !option.needCacheNoData {
 		// 是nil或者零值返回不存在数据异常
-		return DataNotExistsErr
+		return noDataErr
 	}
 
-	// 获取需缓存的数据并且缓存下来
-	err = s.Set(ctx, oriData, cacheInfo)
+	// 获取需缓存的数据并且缓存下来, noData缓存空字符串
+	var cacheStr string
+	if noDataErr == nil {
+		cacheStr, err = oriData.Marshal()
+		if err != nil {
+			return err
+		}
+	}
+	err = s.Set(ctx, cacheInfo, cacheStr)
 	if err != nil {
 		return err
 	}
 
-	// 原始数据不存在返回错误
-	if oriData == nil || reflect.ValueOf(oriData).IsZero() {
-		return DataNotExistsErr
-	}
-
-	return nil
+	return noDataErr
 }
 
 // getNeedReturn 从缓存中获取后，根据第一个值来判断是否需要直接返回结果
@@ -104,8 +102,8 @@ func (s *mCacheService) getNeedReturn(
 	}
 
 	// 空缓存, 返回数据不存在错误
-	if res == "" && err != redis.Nil {
-		return true, DataNotExistsErr
+	if res == "" && err == nil {
+		return true, rdscache.ErrNoData
 	}
 
 	// 无缓存不可以直接返回
@@ -132,23 +130,8 @@ func (s *mCacheService) getFromHash(ctx context.Context, key string, subKey stri
 }
 
 // Set 缓存model，支持缓存零值model, 因为model可能为nil，所以cacheInfo需传入
-func (s *mCacheService) Set(ctx context.Context, model ICacheModel, cacheInfo common.ICacheInfo) error {
-
-	var cacheData string
-	var err error
-	// model不为nil并且model不是零值，则调用Marshal方法获取序列化的值，否则缓存空字符串
-	if model != nil && !reflect.ValueOf(model).IsZero() {
-		cacheData, err = model.Marshal()
-		if err != nil {
-			return err
-		}
-	}
-
-	err = s.set(ctx, cacheInfo, cacheData)
-	if err != nil {
-		return err
-	}
-	return nil
+func (s *mCacheService) Set(ctx context.Context, cacheInfo common.ICacheInfo, cacheStr string) error {
+	return s.set(ctx, cacheInfo, cacheStr)
 }
 
 // set 在redis中缓存数据

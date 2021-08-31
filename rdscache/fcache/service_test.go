@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sponge/rdscache"
 	"sponge/rdscache/common"
 	"sync"
 	"testing"
@@ -47,10 +48,10 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			var data *struct{}
 			So(data, ShouldBeNil)
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
-				return nil, nil
+				return nil, rdscache.ErrNoData
 			}, WithUnMarshalData(data))
 			So(ret, ShouldEqual, "")
-			So(err, ShouldEqual, DataNotExistsErr)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			So(data, ShouldBeNil)
 		})
 
@@ -58,18 +59,18 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
 			})
-			So(ret, ShouldEqual, "")
+			So(ret, ShouldEqual, "null")
 			So(err, ShouldBeNil)
 			// 从缓存中获取下，缓存将不存在
 			tmp, err := rds.Get(rk).Result()
-			So(err, ShouldEqual, redis.Nil)
-			So(tmp, ShouldEqual, "")
+			So(err, ShouldBeNil)
+			So(tmp, ShouldEqual, "null")
 		})
 
 		Convey("首次获取:函数无error并且返回nil:需缓存零值的情况", func() {
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
-			}, WithNeedCacheZero())
+			}, WithNeedCacheNoData())
 			So(ret, ShouldEqual, "null")
 			So(err, ShouldBeNil)
 			// 从缓存中获取下，缓存将不存在
@@ -112,11 +113,8 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			}, WithUnMarshalData(data), WithLock(lock))
 			So(err, ShouldBeNil)
 			So(ret, ShouldNotEqual, "")
-			So(data.A, ShouldEqual, 1)
-			So(data.B, ShouldEqual, "test")
-			tmp, err := rds.Get(rk).Result()
+			_, err = rds.Get(rk).Result()
 			So(err, ShouldBeNil)
-			So(tmp, ShouldNotEqual, "")
 			// check下过期时间
 			expTime, _ := rds.TTL(rk).Result()
 			// 无过期时间
@@ -188,9 +186,8 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 			}, WithLock(lock))
 			So(ret, ShouldNotEqual, "")
 			So(err, ShouldBeNil)
-			tmp, err := rds.Get(rk).Result()
+			_, err = rds.Get(rk).Result()
 			So(err, ShouldBeNil)
-			So(tmp, ShouldNotEqual, "")
 			// check下过期时间
 			expTime, _ := rds.TTL(rk).Result()
 			So(expTime, ShouldBeGreaterThan, time.Second*4)
@@ -253,32 +250,31 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return nil, nil
 			})
-			So(ret, ShouldEqual, "")
+			So(ret, ShouldEqual, "null")
 			So(err, ShouldBeNil)
 			// 从缓存中获取下，缓存将不存在
-			tmp, err := rds.HGet(rk, sk).Result()
-			So(err, ShouldEqual, redis.Nil)
-			So(tmp, ShouldEqual, "")
+			v, err := rds.HGet(rk, sk).Result()
+			So(err, ShouldBeNil)
+			So(v, ShouldEqual, "null")
 		})
 
-		Convey("获取2次:函数无error并且返回nil:需缓存零值的情况", func() {
+		Convey("获取2次:函数无error并且返回nil和no data:需缓存零值的情况", func() {
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
-				return nil, nil
-			}, WithNeedCacheZero())
+				return nil, rdscache.ErrNoData
+			}, WithNeedCacheNoData())
 			So(ret, ShouldEqual, "")
-			// 因为不需要序列化到data，所以没有返回data不存在的error
-			So(err, ShouldBeNil)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 			// 从缓存中获取下，缓存将不存在
 			tmp, err := rds.HGet(rk, sk).Result()
 			So(err, ShouldBeNil)
 			So(tmp, ShouldEqual, "")
 
-			// 在获取一次
+			// 再获取一次
 			ret, err = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
-				return nil, nil
-			}, WithNeedCacheZero())
+				return nil, rdscache.ErrNoData
+			}, WithNeedCacheNoData())
 			So(ret, ShouldEqual, "")
-			So(err, ShouldEqual, DataNotExistsErr)
+			So(err, ShouldEqual, rdscache.ErrNoData)
 		})
 
 		Convey("首次获取:函数返回error的情况", func() {
@@ -384,7 +380,7 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			defer cFunc()
 			go func() {
 				_, _ = fcSvc.GetOrCreate(newCtx, cacheInfo, func() (interface{}, error) {
-					return funcRet, nil
+					return funcRet, rdscache.ErrNoData
 				}, WithLock(lock))
 			}()
 		HERE:

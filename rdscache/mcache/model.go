@@ -12,6 +12,7 @@ type ICacheModel interface {
 	Marshal() (string, error)
 	// model反序列化反方, 将缓存的内容反序列化到model中
 	UnMarshal(value string) error
-	// 获取原始非缓存数据
+	// 获取原始非缓存数据, 当数据不存在时需返回ErrNoData
+	// ErrNoData搭配WithNeedCacheNoData可预防缓存穿透
 	GetOri() (ICacheModel, error)
 }
