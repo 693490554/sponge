@@ -1,0 +1,9 @@
+language: go
+go:
+  - 1.1x
+services:
+  - redis-server
+before_install:
+  - go mod download
+script:
+  - ./test.sh
