@@ -30,9 +30,9 @@ func delTestData() {
 }
 
 func TestMain(m *testing.M) {
-	m.Run()
+	code := m.Run()
 	delTestData()
-	os.Exit(0)
+	os.Exit(code)
 }
 
 //nolint:typecheck

@@ -73,9 +73,9 @@ func (m *TestHashModel) UnMarshal(value string) error {
 }
 
 func TestMain(m *testing.M) {
-	m.Run()
+	code := m.Run()
 	delTestData()
-	os.Exit(0)
+	os.Exit(code)
 }
 
 func Test_mCacheService_Set(t *testing.T) {

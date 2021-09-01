@@ -2,10 +2,10 @@ language: go
 go:
   - 1.15
   - 1.x
-  - tip
 services:
   - redis
 before_install:
   - go mod download
+  - go get github.com/mattn/goveralls
 script:
-  - sh test.sh
+  - $HOME/gopath/bin/goveralls -service=travis-ci
