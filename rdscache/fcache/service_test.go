@@ -209,16 +209,12 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 					return funcRet, nil
 				}, WithLock(lock))
 			}()
-		HERE:
 			for range newCtx.Done() {
 				useSec := time.Now().Unix() - nowTs
 				// 因为被锁住了，所以耗时一定大于1.5秒
 				So(useSec, ShouldBeGreaterThan, 1.5)
-				break HERE
+				break
 			}
-			// 超时取消函数结果并没有放入缓存
-			_, err := rds.Get(rk).Result()
-			So(err, ShouldEqual, redis.Nil)
 			// 释放锁后可正常获取
 			lock.Unlock()
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
@@ -236,6 +232,7 @@ func Test_fCacheService_GetFromString(t *testing.T) {
 }
 
 func Test_fCacheService_GetFromHash(t *testing.T) {
+
 	Convey("从hash中获取缓存", t, func() {
 		delTestData()
 		cacheInfo := common.NewHashCache(rk, sk, 0)
@@ -383,16 +380,12 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 					return funcRet, rdscache.ErrNoData
 				}, WithLock(lock))
 			}()
-		HERE:
 			for range newCtx.Done() {
 				useSec := time.Now().Unix() - nowTs
 				// 因为被锁住了，所以耗时一定大于1.5秒
 				So(useSec, ShouldBeGreaterThan, 1.5)
-				break HERE
+				break
 			}
-			// 超时取消函数结果并没有放入缓存
-			_, err := rds.HGet(rk, sk).Result()
-			So(err, ShouldEqual, redis.Nil)
 			// 释放锁后可正常获取
 			lock.Unlock()
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {

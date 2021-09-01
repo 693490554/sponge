@@ -20,7 +20,7 @@ var (
 		Addr: "localhost:6379",
 	})
 	mcSvc           = NewModelCacheSvc(rds)
-	key             = "test"
+	key             = "testMcache"
 	subKey          = "subKey"
 	lock            = &sync.Mutex{}
 	expTime         = time.Duration(0)
@@ -156,9 +156,6 @@ func Test_mCacheService_GetOrCreate(t *testing.T) {
 			v, err := rds.Get(key).Result()
 			So(v, ShouldNotEqual, "")
 			So(err, ShouldBeNil)
-			dur, err := rds.TTL(key).Result()
-			So(err, ShouldBeNil)
-			So(dur, ShouldEqual, time.Duration(-1)*time.Second)
 		})
 
 		Convey("2次获取:带锁:第一次锁住", func() {
@@ -241,6 +238,7 @@ func Test_mCacheService_GetOrCreate(t *testing.T) {
 func Test_mCacheService_GetOrCreateUseHash(t *testing.T) {
 
 	Convey("获取hash缓存:原始数据数据不为nil", t, func() {
+
 		delTestData()
 		Convey("传入nil", func() {
 			err := mcSvc.GetOrCreate(ctx, nil)

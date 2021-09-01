@@ -4,7 +4,7 @@ go:
   - 1.x
   - tip
 services:
-  - redis-server
+  - redis
 before_install:
   - go mod download
 script:
