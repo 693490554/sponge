@@ -1,5 +1,6 @@
 language: go
 go:
+  - 1.15
   - 1.1x
 services:
   - redis-server --port 6379
