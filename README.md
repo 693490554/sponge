@@ -3,7 +3,6 @@ sponge直译为海绵，让人联想到缓存的特性。该项目是在golang�
 
 # 目录介绍
  - rdscache: redis缓存组件，封装了函数缓存功能和model缓存功能，后续可能会有更多的缓存组件。
- - error.go: 错误定义
  - test_local.sh: 本地执行后可查看html观察test覆盖率及覆盖路径
  
 [travis]: https://travis-ci.com/github/693490554/sponge
