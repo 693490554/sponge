@@ -1,7 +1,8 @@
 language: go
 go:
   - 1.15
-  - 1.1x
+  - 1.x
+  - tip
 services:
   - redis-server --port 6379
 before_install:
