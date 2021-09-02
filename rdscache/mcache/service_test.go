@@ -3,12 +3,12 @@ package mcache
 import (
 	"context"
 	"os"
-	"sponge/rdscache"
-	"sponge/rdscache/common"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/693490554/sponge/rdscache"
+	"github.com/693490554/sponge/rdscache/common"
 	. "github.com/glycerine/goconvey/convey"
 	"github.com/go-redis/redis"
 	json "github.com/json-iterator/go"

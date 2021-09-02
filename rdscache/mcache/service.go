@@ -3,10 +3,10 @@ package mcache
 import (
 	"context"
 	"errors"
-	"sponge/rdscache"
-	"sponge/rdscache/common"
 	"time"
 
+	"github.com/693490554/sponge/rdscache"
+	"github.com/693490554/sponge/rdscache/common"
 	"github.com/go-redis/redis"
 )
 

@@ -1,7 +1,7 @@
 package mcache
 
 import (
-	"sponge/rdscache/common"
+	"github.com/693490554/sponge/rdscache/common"
 )
 
 // ICacheModel 可缓存的model接口

@@ -1,4 +1,4 @@
-module sponge
+module github.com/693490554/sponge
 
 go 1.15
 
