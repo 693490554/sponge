@@ -89,7 +89,7 @@ sponge直译为海绵，让人联想到缓存的特性。该项目是在golang�
  }
  ```
 
-##model缓存使用
+## model缓存使用
 ```go
 
 package main
@@ -168,7 +168,6 @@ func main() {
 	user, err := GetUserWithCache(ctx, 123)
 	fmt.Println(user, err)
 }
-
 
 ```
  
