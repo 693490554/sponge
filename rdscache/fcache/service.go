@@ -3,6 +3,7 @@ package fcache
 import (
 	"context"
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/693490554/sponge/rdscache"
@@ -89,12 +90,8 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 		return cacheStr, noDataErr
 	}
 
-	// 首次放入缓存需要反序列化在这里进行
-	err = json.UnmarshalFromString(cacheStr, options.data)
-	if err != nil {
-		return "", err
-	}
-
+	// 将函数返回结果赋值给传入的data
+	reflect.ValueOf(options.data).Elem().Set(reflect.ValueOf(funcRes).Elem())
 	return cacheStr, nil
 }
 
