@@ -2,6 +2,7 @@ package mcache
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -9,9 +10,11 @@ import (
 
 	"github.com/693490554/sponge/rdscache"
 	"github.com/693490554/sponge/rdscache/common"
+	"github.com/allegro/bigcache"
 	. "github.com/glycerine/goconvey/convey"
 	"github.com/go-redis/redis"
 	json "github.com/json-iterator/go"
+	goCache "github.com/patrickmn/go-cache"
 )
 
 var (
@@ -21,6 +24,7 @@ var (
 	})
 	mcSvc           = NewModelCacheSvc(rds)
 	key             = "testMcache"
+	shardingKey     = "testMcache_01"
 	subKey          = "subKey"
 	lock            = &sync.Mutex{}
 	expTime         = time.Duration(0)
@@ -29,6 +33,7 @@ var (
 
 func delTestData() {
 	rds.Del(key)
+	rds.Del(shardingKey)
 }
 
 type TestStringModel struct {
@@ -85,7 +90,7 @@ func Test_mCacheService_Set(t *testing.T) {
 
 		Convey("不存在过期时间", func() {
 			cacheInfo := (&TestStringModel{}).CacheInfo()
-			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr, nil)
 			So(err, ShouldBeNil)
 			v, err := rds.Get(key).Result()
 			So(v, ShouldEqual, cacheStr)
@@ -97,7 +102,7 @@ func Test_mCacheService_Set(t *testing.T) {
 		Convey("存在过期时间", func() {
 			expTime = 10 * time.Second
 			cacheInfo := (&TestStringModel{}).CacheInfo()
-			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr, nil)
 			So(err, ShouldBeNil)
 			v, err := rds.Get(key).Result()
 			So(v, ShouldEqual, cacheStr)
@@ -116,7 +121,7 @@ func Test_mCacheService_Set(t *testing.T) {
 
 		Convey("不存在过期时间", func() {
 			cacheInfo := (&TestHashModel{}).CacheInfo()
-			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr, nil)
 			So(err, ShouldBeNil)
 			v, err := rds.HGet(key, subKey).Result()
 			So(v, ShouldEqual, cacheStr)
@@ -128,7 +133,7 @@ func Test_mCacheService_Set(t *testing.T) {
 		Convey("存在过期时间", func() {
 			expTime = 10 * time.Second
 			cacheInfo := (&TestHashModel{}).CacheInfo()
-			err := mcSvc.Set(ctx, cacheInfo, cacheStr)
+			err := mcSvc.Set(ctx, cacheInfo, cacheStr, nil)
 			So(err, ShouldBeNil)
 			v, err := rds.HGet(key, subKey).Result()
 			So(v, ShouldEqual, cacheStr)
@@ -309,5 +314,108 @@ func Test_mCacheService_GetOrCreateUseHash(t *testing.T) {
 			err = mcSvc.GetOrCreate(ctx, data, WithLock(lock))
 			So(err, ShouldEqual, rdscache.ErrNoData)
 		})
+	})
+}
+
+func Test_mCacheService_HotKeyOption(t *testing.T) {
+
+	Convey("测试处理热key流程", t, func() {
+		delTestData()
+		Convey("使用分片方式处理热key", func() {
+			data := &TestStringModel{}
+			// 热key判断函数结果为false
+			hotKeyOption, _ := common.NewHotKeyOption(
+				common.WithIsHotKey(func() bool { return false }),
+				common.WithGetShardingKey(func() string { return shardingKey }))
+
+			err := mcSvc.GetOrCreate(ctx, data, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+
+			_, err = rds.Get(key).Result()
+			So(err, ShouldBeNil)
+			_, err = rds.Get(shardingKey).Result()
+			So(err, ShouldEqual, redis.Nil)
+
+			// 热key判定结果为true
+			hotKeyOption, _ = common.NewHotKeyOption(
+				common.WithGetShardingKey(func() string { return shardingKey }))
+			_ = mcSvc.GetOrCreate(ctx, data, WithHotKeyOption(hotKeyOption))
+
+			_, err = rds.Get(shardingKey).Result()
+			So(err, ShouldBeNil)
+		})
+
+		Convey("使用本地缓存-bigCache处理热key", func() {
+			data := &TestStringModel{}
+			cacheBase := common.NewCacheBase(key, time.Second)
+			cache, _ := bigcache.NewBigCache(bigcache.Config{
+				LifeWindow: time.Second * 2, CleanWindow: time.Second, Shards: 128,
+			})
+			wrapBigCache := common.NewWrapBigCache(cache)
+			hotKeyOption, _ := common.NewHotKeyOption(
+				common.WithLocalCache(wrapBigCache, cacheBase),
+				common.WithGetShardingKey(func() string {
+					return shardingKey
+				}))
+
+			// 第一次本地缓存无数据
+			err := mcSvc.GetOrCreate(ctx, data, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+
+			_, err = rds.Get(key).Result()
+			So(err, ShouldBeNil)
+			_, err = rds.Get(shardingKey).Result()
+			So(err, ShouldEqual, redis.Nil)
+
+			localCacheStr, err := wrapBigCache.Get(key)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldNotEqual, "")
+
+			// 再次获取，走本地缓存
+			err = mcSvc.GetOrCreate(ctx, data, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+
+			// 测下localCache是否会失效
+			time.Sleep(time.Second)
+			localCacheStr, err = wrapBigCache.Get(key)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldNotEqual, "")
+
+			time.Sleep(time.Second * 2)
+			localCacheStr, err = wrapBigCache.Get(key)
+			So(err, ShouldEqual, rdscache.ErrLocalCacheNoData)
+			So(localCacheStr, ShouldEqual, "")
+
+		})
+
+		Convey("使用本地缓存(goCache)-预防缓存穿透", func() {
+			data := &TestHashModel{}
+
+			cacheBase := common.NewCacheBase(key, time.Second*2)
+			wrapGoCache := common.NewWrapGoCache(goCache.New(time.Second, time.Second))
+			hotKeyOption, _ := common.NewHotKeyOption(
+				common.WithLocalCache(wrapGoCache, cacheBase))
+			err := mcSvc.GetOrCreate(
+				ctx, data, WithHotKeyOption(hotKeyOption), WithNeedCacheNoData(), WithGetFromRdsCallBack(func() {
+					fmt.Printf("i am a callback")
+				}))
+
+			So(err, ShouldEqual, rdscache.ErrNoData)
+
+			// 再获取一次直接走本地缓存
+			err = mcSvc.GetOrCreate(
+				ctx, data, WithHotKeyOption(hotKeyOption), WithNeedCacheNoData())
+			So(err, ShouldEqual, rdscache.ErrNoData)
+
+			localCacheStr, err := wrapGoCache.Get(key)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldEqual, "")
+
+			// 测试下本地缓存失效
+			time.Sleep(time.Second * 3)
+			_, err = wrapGoCache.Get(key)
+			So(err, ShouldEqual, rdscache.ErrLocalCacheNoData)
+		})
+
 	})
 }

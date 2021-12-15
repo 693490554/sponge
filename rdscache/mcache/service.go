@@ -25,7 +25,7 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 	cacheInfo := model.CacheInfo()
 
 	// 从缓存中获取
-	needReturn, err := s.get(ctx, cacheInfo, model)
+	needReturn, err := s.get(ctx, cacheInfo, model, option)
 	if needReturn {
 		return err
 	}
@@ -36,7 +36,7 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 		defer option.lock.Unlock()
 
 		// 拿到锁后再从缓存中获取下
-		needReturn, err = s.get(ctx, cacheInfo, model)
+		needReturn, err = s.get(ctx, cacheInfo, model, option)
 		if needReturn {
 			return err
 		}
@@ -66,7 +66,7 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 			return err
 		}
 	}
-	err = s.Set(ctx, cacheInfo, cacheStr)
+	err = s.Set(ctx, cacheInfo, cacheStr, option)
 	if err != nil {
 		return err
 	}
@@ -75,17 +75,46 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 }
 
 // Set 缓存model，支持缓存零值model, 因为model可能为nil，所以cacheInfo需传入
-func (s *mCacheService) Set(ctx context.Context, cacheInfo common.ICacheInfo, cacheStr string) error {
-	return s.set(ctx, cacheInfo, cacheStr)
+func (s *mCacheService) Set(
+	ctx context.Context, cacheInfo common.ICacheInfo, cacheStr string, option *MCOption) error {
+	return s.set(ctx, cacheInfo, cacheStr, option)
 }
 
 // get 从缓存中获取后，根据第一个值来判断是否需要直接返回结果
 func (s *mCacheService) get(
-	ctx context.Context, cacheInfo common.ICacheInfo, model ICacheModel) (directReturn bool, err error) {
+	ctx context.Context, cacheInfo common.ICacheInfo, model ICacheModel, option *MCOption) (directReturn bool, err error) {
 
 	var res string
+	// 首先判断是否需要进行hot key处理
+	hotKeyOption := option.hotKeyOption
+	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
+		// 优先考虑使用本地缓存解决
+		if hotKeyOption.UseLocalCache() {
+			res, err = hotKeyOption.GetFromLocalCache()
+			// 存在数据
+			if err == nil {
+				// 缓存了空直接返回
+				if res == "" {
+					return true, rdscache.ErrNoData
+				}
+
+				err = model.UnMarshal(res)
+				if err != nil {
+					return true, err
+				}
+				return true, nil
+			}
+		} else {
+			// 利用分片方案解决热key，将原始的key patch掉
+			cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
+		}
+	}
 	// 从缓存中获取
 	res, err = s.getFromRds(ctx, cacheInfo)
+	// 访问redis回调
+	if option.getFromRdsCallBack != nil {
+		go option.getFromRdsCallBack()
+	}
 	// 报错直接返回错误
 	if err != nil {
 		if err != redis.Nil {
@@ -127,8 +156,24 @@ func (s *mCacheService) getFromHash(ctx context.Context, key string, subKey stri
 }
 
 // set 在redis中缓存数据
-func (s *mCacheService) set(ctx context.Context, cacheInfo common.ICacheInfo, res string) error {
+func (s *mCacheService) set(ctx context.Context, cacheInfo common.ICacheInfo, res string, option *MCOption) error {
 	var err error
+	// 首先判断是否需要进行hot key处理
+	needSetToLocalCache := false
+	hotKeyOption := option.hotKeyOption
+	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
+		// 优先考虑使用本地缓存解决
+		if hotKeyOption.UseLocalCache() {
+			needSetToLocalCache = true
+		} else {
+			// 利用分片方案解决热key，将原始的key patch掉
+			cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
+		}
+	}
+
+	if needSetToLocalCache {
+		_ = hotKeyOption.SetToLocalCache(res)
+	}
 
 	switch cacheInfo := cacheInfo.(type) {
 	case *common.StringCache:
