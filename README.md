@@ -1,12 +1,42 @@
 # sponge [![Build Status][travis image]][travis] [![Coverage Status][coveralls image]][coveralls]
-sponge直译为海绵，让人联想到缓存的特性。该项目是在golang语言下实现了一些缓存组件，例如redis缓存组件，其中会包含函数缓存，对象缓存等等，项目意在帮助开发更方便的使用缓存，减少重复造轮子。
+sponge直译为海绵，让人联想到缓存的特性。该项目是在golang语言下实现的缓存框架，目前仅包含redis缓存组件, 其中会包含函数缓存，对象缓存功能。项目意在帮助开发更方便的使用缓存，并解决了使用缓存场景下的常见问题。
 
 # 目录介绍
- - rdscache: redis缓存组件，封装了函数缓存功能和model缓存功能，后续可能会有更多的缓存组件。
- - test_local.sh: 本地执行后可查看html观察test覆盖率及覆盖路径
+```
+├── rdscache 通用redis缓存组件
+│   ├── common 通用模块
+│   │   ├── cache_type.go 缓存类型,目前支持string和hash作为缓存的结构
+│   │   ├── cheker.go 校验器
+│   │   ├── local_cache.go 本地缓存, 用于解决热key问题
+│   │   └── option.go 通用可选项
+│   ├── error.go 错误定义
+│   ├── fcache 函数缓存
+│   │   ├── option.go 可选项
+│   │   ├── service.go 函数缓存对外提供的service方法
+│   │   └── service_test.go 测试用例
+│   └── mcache model缓存
+│       ├── model.go 对象定义
+│       ├── option.go 可选项
+│       ├── service.go model缓存对外提供的service方法
+│       └── service_test.go 测试用例
+└── test_local.sh 本地执行后可查看html观察test覆盖率及覆盖路径, 需配合本地redis一起运行
+```
+
+# 功能简介
+ - rdscache
+   - 函数缓存
+     - 缓存函数的返回结果
+     - 支持预防缓存穿透
+     - 支持预防缓存击穿
+     - 支持注册访问redis函数回调, 业务层可实现热点key的动态判断或监控等功能
+     - 支持热点key处理
+     - 支持通过注册的函数用于判断key是否是热key, 可扩展用于动态热点key处理
+   - model缓存
+     - 缓存某一个对象
+     - 同上函数缓存, 支持预防缓存穿透及击穿,及热key处理
  
- ## func缓存使用
- ```go
+## func缓存使用
+```go
  package main
  
  import (
@@ -87,7 +117,7 @@ sponge直译为海绵，让人联想到缓存的特性。该项目是在golang�
  	user, err := GetUserWithCache(context.Background(), 123)
  	fmt.Println(user, err)
  }
- ```
+```
 
 ## model缓存使用
 ```go

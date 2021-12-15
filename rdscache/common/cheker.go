@@ -4,12 +4,9 @@ import (
 	"errors"
 )
 
-func CheckCacheBase(base cacheBase) {
+func CheckCacheBase(base CacheBase) {
 	if base.Key == "" {
 		panic("key must not empty")
-	}
-	if base.ExpTime < 0 {
-		panic("expTime must > 0")
 	}
 }
 

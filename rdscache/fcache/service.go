@@ -17,16 +17,13 @@ import (
 // ErrNoData搭配可选项: WithNeedCacheNoData一起使用，预防缓存穿透
 type CF func() (interface{}, error)
 
-type IFuncCacheSvc interface {
-	GetOrCreate(ctx context.Context, cacheInfo common.ICacheInfo, cacheFunc CF, opts ...FCOptionWrap) (string, error)
-}
-
 type fCacheService struct {
 	rds *redis.Client // 使用redis作为缓存
 }
 
 // GetOrCreate 从缓存中获取缓存原始内容, 如果缓存不存在则将函数结果放入缓存
-func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICacheInfo, cacheFunc CF, opts ...FCOptionWrap) (string, error) {
+func (s *fCacheService) GetOrCreate(
+	ctx context.Context, cacheInfo common.ICacheInfo, cacheFunc CF, opts ...FCOptionWrap) (string, error) {
 	// 前置校验
 	err := common.CheckCacheInfo(cacheInfo)
 	if err != nil {
@@ -35,8 +32,8 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 	options := NewFCacheOption(opts...)
 
 	// 从缓存中获取
-	needReturn, res, err := s.getNeedReturn(ctx, cacheInfo, options.data)
-	if needReturn {
+	directReturn, res, err := s.get(ctx, cacheInfo, options)
+	if directReturn {
 		return res, err
 	}
 
@@ -46,11 +43,11 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 		defer options.lock.Unlock()
 
 		// 再从缓存中获取下，有则直接返回，没有代表第一个拿到锁的协程，需从函数中获取缓存信息
-		needReturn, res, err = s.getNeedReturn(ctx, cacheInfo, options.data)
+		directReturn, res, err = s.get(ctx, cacheInfo, options)
 		if err != nil {
 			return "", err
 		}
-		if needReturn {
+		if directReturn {
 			return res, nil
 		}
 	}
@@ -70,7 +67,7 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 		return "", noDataErr
 	}
 	var cacheStr string
-	// 数据不存在缓存空字符串
+	// 数据存在,将函数返回结果进行序列化; 数据如果不存在,则缓存空字符串
 	if noDataErr == nil {
 		cacheStr, err = json.MarshalToString(funcRes)
 		if err != nil {
@@ -79,7 +76,7 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 	}
 
 	// 放入缓存中
-	err = s.set(ctx, cacheInfo, cacheStr)
+	err = s.set(ctx, cacheInfo, cacheStr, options)
 	if err != nil {
 		return "", err
 	}
@@ -98,39 +95,69 @@ func (s *fCacheService) GetOrCreate(ctx context.Context, cacheInfo common.ICache
 	return cacheStr, nil
 }
 
-// getNeedReturn 从缓存中获取后，根据第一个值来判断是否需要直接返回结果
-func (s *fCacheService) getNeedReturn(ctx context.Context, cacheInfo common.ICacheInfo, data interface{}) (bool, string, error) {
-	// 从缓存中获取
-	res, err := s.get(ctx, cacheInfo)
-	// 报错直接返回错误
-	if err != nil && err != redis.Nil {
-		return true, "", err
+// get 从缓存中获取后，根据第一个值来判断是否需要直接返回结果
+func (s *fCacheService) get(ctx context.Context, cacheInfo common.ICacheInfo, option *fCacheOption) (
+	directReturn bool, res string, err error) {
+
+	// 首先判断是否需要进行hot key处理
+	hotKeyOption := option.hotKeyOption
+	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
+		// 优先考虑使用本地缓存解决
+		if hotKeyOption.UseLocalCache() {
+			res, err = hotKeyOption.GetFromLocalCache()
+			// 存在数据
+			if err == nil {
+				// 缓存了空直接返回
+				if res == "" {
+					return true, "", rdscache.ErrNoData
+				}
+
+				if option.data != nil {
+					err = json.UnmarshalFromString(res, option.data)
+					if err != nil {
+						return true, "", err
+					}
+				}
+				return true, res, nil
+			}
+		} else {
+			// 利用分片方案解决热key，将原始的key patch掉
+			cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
+		}
+	}
+
+	// 从redis缓存中获取
+	res, err = s.getFromRds(ctx, cacheInfo)
+	// rds访问回调函数, 异步执行
+	if option.getFromRdsCallBack != nil {
+		go option.getFromRdsCallBack()
+	}
+	if err != nil {
+		if err != redis.Nil {
+			return true, "", err
+		}
+		// 无缓存不可以直接返回, 需尝试从源中获取数据
+		return false, "", nil
 	}
 
 	// 缓存了空返回无数据异常
-	if res == "" && err == nil {
+	if res == "" {
 		return true, "", rdscache.ErrNoData
-	}
-
-	// 缓存结果不为空或者为空(特意缓存空信息，预防缓存穿透), 直接返回
-	if res != "" {
-		if data == nil {
+	} else {
+		if option.data == nil {
 			return true, res, nil
 		}
 
-		err = json.UnmarshalFromString(res, data)
+		err = json.UnmarshalFromString(res, option.data)
 		if err != nil {
 			return true, "", err
 		}
 		return true, res, nil
 	}
-
-	// 无缓存不可以直接返回
-	return false, "", nil
 }
 
-// get 从redis中获取缓存的数据
-func (s *fCacheService) get(ctx context.Context, cacheInfo common.ICacheInfo) (string, error) {
+// getFromRds 从redis中获取缓存的数据
+func (s *fCacheService) getFromRds(ctx context.Context, cacheInfo common.ICacheInfo) (string, error) {
 	switch cacheInfo := cacheInfo.(type) {
 	case *common.StringCache:
 		return s.getFromString(ctx, cacheInfo.Key)
@@ -151,10 +178,27 @@ func (s *fCacheService) getFromHash(ctx context.Context, key string, sk string) 
 	return s.rds.HGet(key, sk).Result()
 }
 
-// set 在redis中缓存数据
+// set 将数据放入缓存
 func (s *fCacheService) set(
-	ctx context.Context, cacheInfo interface{}, cacheStr string) error {
+	ctx context.Context, cacheInfo common.ICacheInfo, cacheStr string, option *fCacheOption) error {
 	var err error
+
+	// 首先判断是否需要进行hot key处理
+	needSetToLocalCache := false
+	hotKeyOption := option.hotKeyOption
+	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
+		// 优先考虑使用本地缓存解决
+		if hotKeyOption.UseLocalCache() {
+			needSetToLocalCache = true
+		} else {
+			// 利用分片方案解决热key，将原始的key patch掉
+			cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
+		}
+	}
+
+	if needSetToLocalCache {
+		_ = hotKeyOption.SetToLocalCache(cacheStr)
+	}
 
 	switch cacheInfo := cacheInfo.(type) {
 	case *common.StringCache:
@@ -188,7 +232,7 @@ func (s *fCacheService) setToHash(
 	return err
 }
 
-func NewFCacheService(rds *redis.Client) (IFuncCacheSvc, error) {
+func NewFCacheService(rds *redis.Client) (*fCacheService, error) {
 	if rds == nil {
 		return nil, errors.New("redis must not nil")
 	}

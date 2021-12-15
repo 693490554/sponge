@@ -3,51 +3,66 @@ package common
 import "time"
 
 type ICacheInfo interface {
-	BaseInfo() cacheBase
+	BaseInfo() CacheBase
+	UpdateCacheKey(key string)
 }
 
-type cacheBase struct {
-	Key     string        // redis Key
+type CacheBase struct {
+	Key     string        // 缓存的Key
 	ExpTime time.Duration // key的过期时间
 }
 
-type StringCache struct {
-	cacheBase
+func NewCacheBase(key string, exp time.Duration) *CacheBase {
+	ret := &CacheBase{Key: key, ExpTime: exp}
+	CheckCacheBase(*ret)
+	return ret
 }
 
-func (c *StringCache) BaseInfo() cacheBase {
-	return c.cacheBase
+type StringCache struct {
+	CacheBase
+}
+
+func (c *StringCache) BaseInfo() CacheBase {
+	return c.CacheBase
+}
+
+func (c *StringCache) UpdateCacheKey(key string) {
+	c.Key = key
 }
 
 func NewStringCache(Key string, ExpTime time.Duration) *StringCache {
-	base := cacheBase{
+	base := CacheBase{
 		Key:     Key,
 		ExpTime: ExpTime,
 	}
 	CheckCacheBase(base)
 	return &StringCache{
-		cacheBase: base,
+		CacheBase: base,
 	}
 }
 
 type HashCache struct {
-	cacheBase
+	CacheBase
 	SubKey string // 子key，对应hash中的field
 }
 
-func (c *HashCache) BaseInfo() cacheBase {
-	return c.cacheBase
+func (c *HashCache) BaseInfo() CacheBase {
+	return c.CacheBase
+}
+
+func (c *HashCache) UpdateCacheKey(key string) {
+	c.Key = key
 }
 
 func NewHashCache(Key, SubKey string, ExpTime time.Duration) *HashCache {
-	base := cacheBase{
+	base := CacheBase{
 		Key:     Key,
 		ExpTime: ExpTime,
 	}
 	CheckCacheBase(base)
 	CheckHashSubKey(SubKey)
 	return &HashCache{
-		cacheBase: base,
+		CacheBase: base,
 		SubKey:    SubKey,
 	}
 }

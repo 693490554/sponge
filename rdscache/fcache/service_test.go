@@ -3,6 +3,7 @@ package fcache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/693490554/sponge/rdscache"
 	"github.com/693490554/sponge/rdscache/common"
+	"github.com/allegro/bigcache"
 	. "github.com/glycerine/goconvey/convey"
 	"github.com/go-redis/redis"
+	goCache "github.com/patrickmn/go-cache"
 )
 
 var (
@@ -23,10 +26,12 @@ var (
 	rk       = "test"
 	sk       = "subKey"
 	lock     = &sync.Mutex{}
+	shardKey = rk + "_01"
 )
 
 func delTestData() {
 	rds.Del(rk)
+	rds.Del(shardKey)
 }
 
 func TestMain(m *testing.M) {
@@ -397,5 +402,123 @@ func Test_fCacheService_GetFromHash(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(ret, ShouldNotEqual, "")
 		})
+	})
+}
+
+// Test_fCacheService_HandleHotKey 测试处理热key
+func Test_fCacheService_HandleHotKey(t *testing.T) {
+	Convey("测试处理热key流程", t, func() {
+		delTestData()
+		cacheInfo := common.NewStringCache(rk, 0)
+		Convey("使用分片方式处理热key", func() {
+			// 热key判断函数结果为false
+			hotKeyOption, _ := common.NewHotKeyOption(
+				common.WithIsHotKey(func() bool { return false }),
+				common.WithGetShardingKey(func() string { return shardKey }))
+
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return "test", nil
+			}, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+			So(ret, ShouldNotEqual, "test")
+
+			_, err = rds.Get(rk).Result()
+			So(err, ShouldBeNil)
+			_, err = rds.Get(shardKey).Result()
+			So(err, ShouldEqual, redis.Nil)
+
+			// 热key判定结果为true
+			hotKeyOption, _ = common.NewHotKeyOption(
+				common.WithGetShardingKey(func() string { return shardKey }))
+			_, err = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return "test", nil
+			}, WithHotKeyOption(hotKeyOption))
+
+			_, err = rds.Get(shardKey).Result()
+			So(err, ShouldBeNil)
+		})
+
+		Convey("使用本地缓存-bigCache处理热key", func() {
+
+			cacheBase := common.NewCacheBase(rk, time.Second)
+			cache, _ := bigcache.NewBigCache(bigcache.Config{
+				LifeWindow: time.Second * 2, CleanWindow: time.Second, Shards: 128,
+			})
+			wrapBigCache := common.NewWrapBigCache(cache)
+			hotKeyOption, _ := common.NewHotKeyOption(
+				common.WithLocalCache(wrapBigCache, cacheBase),
+				common.WithGetShardingKey(func() string {
+					return shardKey
+				}))
+
+			// 第一次本地缓存无数据
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return "test", nil
+			}, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+			So(ret, ShouldEqual, `"test"`)
+
+			_, err = rds.Get(rk).Result()
+			So(err, ShouldBeNil)
+			_, err = rds.Get(shardKey).Result()
+			So(err, ShouldEqual, redis.Nil)
+
+			localCacheStr, err := wrapBigCache.Get(rk)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldEqual, `"test"`)
+
+			// 再次获取，走本地缓存, 测试下将数据反序列化到data中
+			var data string
+			ret, err = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return "test", nil
+			}, WithHotKeyOption(hotKeyOption), WithUnMarshalData(&data))
+			So(err, ShouldBeNil)
+			So(ret, ShouldEqual, `"test"`)
+			So(data, ShouldEqual, "test")
+
+			// 测下localCache是否会失效
+			time.Sleep(time.Second)
+			localCacheStr, err = wrapBigCache.Get(rk)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldEqual, `"test"`)
+
+			time.Sleep(time.Second * 2)
+			localCacheStr, err = wrapBigCache.Get(rk)
+			So(err, ShouldEqual, rdscache.ErrLocalCacheNoData)
+			So(localCacheStr, ShouldEqual, "")
+
+		})
+
+		Convey("使用本地缓存(goCache)-预防缓存穿透", func() {
+
+			cacheBase := common.NewCacheBase(rk, time.Second*2)
+			wrapGoCache := common.NewWrapGoCache(goCache.New(time.Second, time.Second))
+			hotKeyOption, _ := common.NewHotKeyOption(
+				common.WithLocalCache(wrapGoCache, cacheBase))
+			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return "", rdscache.ErrNoData
+			}, WithHotKeyOption(hotKeyOption), WithNeedCacheNoData(), WithGetFromRdsCallBack(func() {
+				fmt.Printf("i am a callback")
+			}))
+			So(err, ShouldEqual, rdscache.ErrNoData)
+			So(ret, ShouldEqual, "")
+
+			// 再获取一次直接走本地缓存
+			ret, err = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
+				return "", rdscache.ErrNoData
+			}, WithHotKeyOption(hotKeyOption), WithNeedCacheNoData())
+			So(err, ShouldEqual, rdscache.ErrNoData)
+			So(ret, ShouldEqual, "")
+
+			localCacheStr, err := wrapGoCache.Get(rk)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldEqual, "")
+
+			// 测试下本地缓存失效
+			time.Sleep(time.Second * 3)
+			_, err = wrapGoCache.Get(rk)
+			So(err, ShouldEqual, rdscache.ErrLocalCacheNoData)
+		})
+
 	})
 }
