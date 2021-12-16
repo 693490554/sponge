@@ -40,16 +40,16 @@ sponge直译为海绵，让人联想到缓存的特性。该项目是在golang�
 package main
 
 import (
-	"context"
-	"fmt"
-	"sync"
-	"time"
+    "context"
+    "fmt"
+    "sync"
+    "time"
         
-	"github.com/693490554/sponge/rdscache"
-	"github.com/693490554/sponge/rdscache/common"
-	"github.com/693490554/sponge/rdscache/fcache"
-	"github.com/go-redis/redis"
-   "github.com/allegro/bigcache"
+    "github.com/693490554/sponge/rdscache"
+    "github.com/693490554/sponge/rdscache/common"
+    "github.com/693490554/sponge/rdscache/fcache"
+    "github.com/go-redis/redis"
+    "github.com/allegro/bigcache"
 
 )
 
@@ -67,14 +67,14 @@ var wrapBigCache = common.NewWrapBigCache(localCache)
 var lock sync.Locker = &sync.Mutex{}
  
 type User struct {
-	UserId uint64
-	Name   string
-	Age    uint8
+    UserId uint64
+    Name   string
+    Age    uint8
 }
 
 // GetUser 从数据源中获取user数据, 可以是mysql等等
 func GetUser(ctx context.Context, userId uint64) (*User, error) {
-	return nil, nil
+    return nil, nil
 }
 
 // GetUserWithCache 从缓存中获取user数据
@@ -119,10 +119,10 @@ func GetUserWithCache(ctx context.Context, userId uint64) (*User, error) {
     	}
     	return user, nil
     }, fcache.WithNeedCacheNoData(), // 可选项，当数据不存在时也需要缓存下来，防止缓存穿透，此时缓存的中记录的是空字符串
-    	fcache.WithLock(lock), // 可选项，预防缓存击穿，需注意lock和需要预防缓存击穿的函数为一一对应的关系，lock为单例，同一个lock不可用于多个需要预防缓存穿透的地方 
-    	fcache.WithUnMarshalData(&retUser), // 可选项，从缓存中获取到结果后需要序列化到retUser中，需注意不可传入nil指针  
-        fcache.WithHotKeyOption(hotKeyOption),
-    } // 可选项，热key处理
+       fcache.WithLock(lock), // 可选项，预防缓存击穿，需注意lock和需要预防缓存击穿的函数为一一对应的关系，lock为单例，同一个lock不可用于多个需要预防缓存穿透的地方 
+       fcache.WithUnMarshalData(&retUser), // 可选项，从缓存中获取到结果后需要序列化到retUser中，需注意不可传入nil指针  
+       fcache.WithHotKeyOption(hotKeyOption), // 可选项，热key处理      
+    )
     
     
     if err != nil {
