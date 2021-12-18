@@ -158,21 +158,22 @@ func (s *mCacheService) getFromHash(ctx context.Context, key string, subKey stri
 // set 在redis中缓存数据
 func (s *mCacheService) set(ctx context.Context, cacheInfo common.ICacheInfo, res string, option *MCOption) error {
 	var err error
-	// 首先判断是否需要进行hot key处理
-	needSetToLocalCache := false
-	hotKeyOption := option.hotKeyOption
-	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
-		// 优先考虑使用本地缓存解决
-		if hotKeyOption.UseLocalCache() {
-			needSetToLocalCache = true
-		} else {
-			// 利用分片方案解决热key，将原始的key patch掉
-			cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
+	if option != nil {
+		// 首先判断是否需要进行hot key处理
+		needSetToLocalCache := false
+		hotKeyOption := option.hotKeyOption
+		if hotKeyOption != nil && hotKeyOption.IsHotKey() {
+			// 优先考虑使用本地缓存解决
+			if hotKeyOption.UseLocalCache() {
+				needSetToLocalCache = true
+			} else {
+				// 利用分片方案解决热key，将原始的key patch掉
+				cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
+			}
 		}
-	}
-
-	if needSetToLocalCache {
-		_ = hotKeyOption.SetToLocalCache(res)
+		if needSetToLocalCache {
+			_ = hotKeyOption.SetToLocalCache(res)
+		}
 	}
 
 	switch cacheInfo := cacheInfo.(type) {
