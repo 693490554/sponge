@@ -99,26 +99,31 @@ func (s *fCacheService) GetOrCreate(
 func (s *fCacheService) get(ctx context.Context, cacheInfo common.ICacheInfo, option *fCacheOption) (
 	directReturn bool, res string, err error) {
 
+	directReturn = true
 	// 首先判断是否需要进行hot key处理
 	hotKeyOption := option.hotKeyOption
+	needSetToLocalCache := false
 	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
 		// 优先考虑使用本地缓存解决
 		if hotKeyOption.UseLocalCache() {
 			res, err = hotKeyOption.GetFromLocalCache()
-			// 存在数据
+			// 存在数据(不存在数据时会报错，如果没有错误缓存中肯定是存在数据的)
 			if err == nil {
 				// 缓存了空直接返回
 				if res == "" {
-					return true, "", rdscache.ErrNoData
-				}
-
-				if option.data != nil {
-					err = json.UnmarshalFromString(res, option.data)
-					if err != nil {
-						return true, "", err
+					err = rdscache.ErrNoData
+				} else {
+					if option.data != nil {
+						err = json.UnmarshalFromString(res, option.data)
 					}
 				}
-				return true, res, nil
+			} else {
+				// 从本地缓存中没拿到，不可以直接返回，并且后续如果从redis中拿到了数据需要放入本地缓存中
+				directReturn, needSetToLocalCache = false, true
+			}
+
+			if directReturn {
+				return
 			}
 		} else {
 			// 利用分片方案解决热key，将原始的key patch掉
@@ -127,33 +132,33 @@ func (s *fCacheService) get(ctx context.Context, cacheInfo common.ICacheInfo, op
 	}
 
 	// 从redis缓存中获取
+	directReturn = true // 默认直接返回, 只有少数情况不可以直接返回
 	res, err = s.getFromRds(ctx, cacheInfo)
 	// rds访问回调函数, 异步执行
 	if option.getFromRdsCallBack != nil {
 		go option.getFromRdsCallBack()
 	}
+
 	if err != nil {
-		if err != redis.Nil {
-			return true, "", err
+		if err == redis.Nil {
+			directReturn, err = false, nil
 		}
-		// 无缓存不可以直接返回, 需尝试从源中获取数据
-		return false, "", nil
-	}
-
-	// 缓存了空返回无数据异常
-	if res == "" {
-		return true, "", rdscache.ErrNoData
 	} else {
-		if option.data == nil {
-			return true, res, nil
+		// 缓存了空返回无数据异常
+		if res == "" {
+			err = rdscache.ErrNoData
+		} else {
+			if option.data != nil {
+				err = json.UnmarshalFromString(res, option.data)
+			}
 		}
-
-		err = json.UnmarshalFromString(res, option.data)
-		if err != nil {
-			return true, "", err
-		}
-		return true, res, nil
 	}
+
+	// 本地缓存失效，但是redis缓存存在时，需将数据同步至本地缓存
+	if directReturn && needSetToLocalCache {
+		err = hotKeyOption.SetToLocalCache(res)
+	}
+	return
 }
 
 // getFromRds 从redis中获取缓存的数据

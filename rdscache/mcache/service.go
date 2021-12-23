@@ -84,9 +84,11 @@ func (s *mCacheService) Set(
 func (s *mCacheService) get(
 	ctx context.Context, cacheInfo common.ICacheInfo, model ICacheModel, option *MCOption) (directReturn bool, err error) {
 
+	directReturn = true
 	var res string
 	// 首先判断是否需要进行hot key处理
 	hotKeyOption := option.hotKeyOption
+	needSetToLocalCache := false
 	if hotKeyOption != nil && hotKeyOption.IsHotKey() {
 		// 优先考虑使用本地缓存解决
 		if hotKeyOption.UseLocalCache() {
@@ -95,45 +97,50 @@ func (s *mCacheService) get(
 			if err == nil {
 				// 缓存了空直接返回
 				if res == "" {
-					return true, rdscache.ErrNoData
+					err = rdscache.ErrNoData
+				} else {
+					err = model.UnMarshal(res)
 				}
+			} else {
+				directReturn, needSetToLocalCache = false, true
+			}
 
-				err = model.UnMarshal(res)
-				if err != nil {
-					return true, err
-				}
-				return true, nil
+			if directReturn {
+				return
 			}
 		} else {
 			// 利用分片方案解决热key，将原始的key patch掉
 			cacheInfo.UpdateCacheKey(hotKeyOption.GetShardingKey())
 		}
 	}
+
 	// 从缓存中获取
 	res, err = s.getFromRds(ctx, cacheInfo)
 	// 访问redis回调
 	if option.getFromRdsCallBack != nil {
 		go option.getFromRdsCallBack()
 	}
+
+	directReturn = true
 	// 报错直接返回错误
 	if err != nil {
-		if err != redis.Nil {
-			return true, err
+		if err == redis.Nil {
+			directReturn, err = false, nil
 		}
-		return false, nil
-	}
-
-	// 缓存结果不为空
-	if res != "" {
-		err = model.UnMarshal(res)
-		if err != nil {
-			return true, err
-		}
-		return true, nil
 	} else {
-		return true, rdscache.ErrNoData
+		// 缓存结果不为空
+		if res != "" {
+			err = model.UnMarshal(res)
+		} else {
+			err = rdscache.ErrNoData
+		}
 	}
 
+	// 本地缓存失效，但是redis缓存存在时，需将数据同步至本地缓存
+	if directReturn && needSetToLocalCache {
+		err = hotKeyOption.SetToLocalCache(res)
+	}
+	return
 }
 
 func (s *mCacheService) getFromRds(ctx context.Context, cacheInfo common.ICacheInfo) (string, error) {

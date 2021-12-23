@@ -433,6 +433,7 @@ func Test_fCacheService_HandleHotKey(t *testing.T) {
 			_, err = fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return "test", nil
 			}, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
 
 			_, err = rds.Get(shardKey).Result()
 			So(err, ShouldBeNil)
@@ -451,7 +452,7 @@ func Test_fCacheService_HandleHotKey(t *testing.T) {
 					return shardKey
 				}))
 
-			// 第一次本地缓存无数据
+			// 第一次获取，会将回源数据放入到redis和localCache中
 			ret, err := fcSvc.GetOrCreate(ctx, cacheInfo, func() (interface{}, error) {
 				return "test", nil
 			}, WithHotKeyOption(hotKeyOption))
@@ -487,6 +488,22 @@ func Test_fCacheService_HandleHotKey(t *testing.T) {
 			So(err, ShouldEqual, rdscache.ErrLocalCacheNoData)
 			So(localCacheStr, ShouldEqual, "")
 
+			// 本地缓存已失效，但是redis缓存未失效
+			// 第一次获取会将redis缓存放入本地缓存
+			ret, err = fcSvc.GetOrCreate(
+				ctx, cacheInfo, func() (interface{}, error) {
+					return "test", nil
+				}, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+			So(ret, ShouldEqual, `"test"`)
+
+			// 再获取一次直接走本地缓存，仍可正常获取
+			ret, err = fcSvc.GetOrCreate(
+				ctx, cacheInfo, func() (interface{}, error) {
+					return "test", nil
+				}, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+			So(ret, ShouldEqual, `"test"`)
 		})
 
 		Convey("使用本地缓存(goCache)-预防缓存穿透", func() {

@@ -386,6 +386,21 @@ func Test_mCacheService_HotKeyOption(t *testing.T) {
 			So(err, ShouldEqual, rdscache.ErrLocalCacheNoData)
 			So(localCacheStr, ShouldEqual, "")
 
+			// 再次获取，此时本地缓存失效，redis缓存仍存在, 会将redis数据放入本地缓存
+			err = mcSvc.GetOrCreate(ctx, data, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+
+			localCacheStr, err = wrapBigCache.Get(key)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldNotEqual, "")
+
+			// 再次获取，会直接从本地缓存中获取数据
+			err = mcSvc.GetOrCreate(ctx, data, WithHotKeyOption(hotKeyOption))
+			So(err, ShouldBeNil)
+
+			localCacheStr, err = wrapBigCache.Get(key)
+			So(err, ShouldBeNil)
+			So(localCacheStr, ShouldNotEqual, "")
 		})
 
 		Convey("使用本地缓存(goCache)-预防缓存穿透", func() {
