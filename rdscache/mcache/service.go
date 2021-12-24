@@ -3,6 +3,7 @@ package mcache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/693490554/sponge/rdscache"
@@ -78,6 +79,191 @@ func (s *mCacheService) GetOrCreate(ctx context.Context, model ICacheModel, opts
 func (s *mCacheService) Set(
 	ctx context.Context, cacheInfo common.ICacheInfo, cacheStr string, option *MCOption) error {
 	return s.set(ctx, cacheInfo, cacheStr, option)
+}
+
+// MGetOrCreate 批量从缓存中获取数据, 数据不存在需要回源, 回源后的数据会放入缓存中
+// todo-未来功能: 获取对象个数暂不限制(1次性从redis中全部获取)，后续将支持并发分批获取，防止单次获取过多阻塞redis
+// todo-未来功能: 后续将支持使用本地缓存解决热key(一批数据中，可能部分数据是热数据，需要从本地缓存中获取)。
+// TODO-使用注意事项: mGetFromOriFunc-批量回源查询时，建议如果某条数据不存在时返回nil，即查X条返回X条(其中不存在的为nil)
+func (s *mCacheService) MGetOrCreate(
+	ctx context.Context, models []IMultiCacheModel,
+	mGetFromOriFunc func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error),
+	optionWraps ...MGetOptionWrap) error {
+
+	if len(models) == 0 {
+		return nil
+	}
+
+	option := NewMGetOption(optionWraps...)
+
+	// 获取所有的key信息，批量从缓存中获取
+	var cacheInfos []common.ICacheInfo
+	for _, m := range models {
+		cacheInfos = append(cacheInfos, m.CacheInfo())
+	}
+	cacheValues, err := s.mGet(ctx, cacheInfos)
+	if err != nil {
+		return err
+	}
+
+	// 获取从缓存中没有找到的数据
+	var unMarshalErr error
+	var noCacheModels []IMultiCacheModel
+	var noCacheModelsIdxs []int
+	for idx, v := range cacheValues {
+		if v != nil {
+			err = models[idx].UnMarshal(v.(string))
+			// 可能是脏数据或者其它原因导致反序列化失败，这种情况打个错误日志，并返回特殊错误
+			if err != nil {
+				unMarshalErr = rdscache.ErrMGetHaveSomeUnMarshalFail
+				fmt.Println("MGet UnMarshal fail ", models[idx])
+			}
+		} else { // 缓存中无数据
+			noCacheModels = append(noCacheModels, models[idx])
+			noCacheModelsIdxs = append(noCacheModelsIdxs, idx)
+		}
+	}
+
+	// 数据在缓存中全部存在，不用回源，直接返回
+	if len(noCacheModels) == 0 {
+		return unMarshalErr
+	}
+
+	// 批量回源查询数据
+	originModels, err := mGetFromOriFunc(ctx, noCacheModels)
+	// TODO：回源方法必须返回全部数据, 例如获取三个缓存中不存在的数据，必须返回三个回源数据, 不存在的数据需返回nil
+	if len(noCacheModels) != len(originModels) {
+		return rdscache.ErrMGetFromOriReturnCntNotEqualQueryCnt
+	}
+	if err != nil {
+		return err
+	}
+
+	// 将回源后的数据更新到models中
+	for idx, m := range originModels {
+		models[noCacheModelsIdxs[idx]].UpdateSelf(m)
+	}
+
+	// 将回源后的数据放入缓存
+	err = s.mSet(ctx, originModels, noCacheModels, option)
+	if err != nil {
+		return err
+	}
+
+	return unMarshalErr
+
+}
+
+// mGet 批量获取
+func (s *mCacheService) mGet(
+	ctx context.Context, cacheInfos []common.ICacheInfo) ([]interface{}, error) {
+	return s.mGetFromRds(ctx, cacheInfos)
+}
+
+// mGetFromRds 从redis中批量获取
+func (s *mCacheService) mGetFromRds(
+	ctx context.Context, cacheInfos []common.ICacheInfo) ([]interface{}, error) {
+
+	switch cacheInfo := cacheInfos[0].(type) {
+	case *common.StringCache:
+		var keys []string
+		for _, info := range cacheInfos {
+			keys = append(keys, info.(*common.StringCache).Key)
+		}
+		return s.mGetFromString(ctx, keys)
+	case *common.HashCache:
+		var subKeys []string
+		for _, info := range cacheInfos {
+			subKeys = append(subKeys, info.(*common.HashCache).SubKey)
+		}
+		return s.mGetFromHash(ctx, cacheInfo.Key, subKeys)
+	default:
+		return nil, errors.New("unknown KT")
+	}
+}
+
+func (s *mCacheService) mGetFromString(ctx context.Context, keys []string) ([]interface{}, error) {
+	return s.rds.MGet(keys...).Result()
+}
+
+func (s *mCacheService) mGetFromHash(ctx context.Context, key string, subKeys []string) ([]interface{}, error) {
+	return s.rds.HMGet(key, subKeys...).Result()
+}
+
+// mSet 批量设置缓存
+func (s *mCacheService) mSet(
+	ctx context.Context, oriModels, noCacheModels []IMultiCacheModel,
+	option *MGetOption) error {
+	return s.mSetToRds(ctx, oriModels, noCacheModels, option)
+}
+
+// mGetFromRds 从redis中批量获取
+func (s *mCacheService) mSetToRds(
+	ctx context.Context, oriModels, noCacheModels []IMultiCacheModel,
+	option *MGetOption) error {
+
+	switch noCacheModels[0].CacheInfo().(type) {
+	case *common.StringCache:
+		var pairs []interface{}
+		for idx, model := range oriModels {
+			var v string
+			var err error
+
+			// 回源数据不存在
+			if model == nil {
+				if !option.needCacheNoData {
+					continue
+				}
+			} else {
+				v, err = model.Marshal()
+				if err != nil {
+					return err
+				}
+			}
+			// 回源数据如果不存在，会返回nil，如果需要缓存nil，此时通过model是拿不到CacheInfo()的, 所以需要从对应的没有缓存的models中获取
+			pairs = append(pairs, noCacheModels[idx].CacheInfo().BaseInfo().Key, v)
+		}
+
+		if len(pairs) == 0 {
+			return nil
+		}
+		return s.mSetToString(ctx, pairs)
+	case *common.HashCache:
+		fields := map[string]interface{}{}
+		for idx, model := range oriModels {
+			var v string
+			var err error
+
+			if model == nil {
+				if !option.needCacheNoData {
+					continue
+				}
+			} else {
+				v, err = model.Marshal()
+				if err != nil {
+					return err
+				}
+			}
+			fields[noCacheModels[idx].CacheInfo().(*common.HashCache).SubKey] = v
+		}
+
+		if len(fields) == 0 {
+			return nil
+		}
+		return s.mSetToHash(ctx, noCacheModels[0].CacheInfo().BaseInfo().Key, fields)
+	default:
+		return errors.New("unknown KT")
+	}
+}
+
+func (s *mCacheService) mSetToString(ctx context.Context, paris []interface{}) error {
+	_, err := s.rds.MSet(paris...).Result()
+	return err
+}
+
+func (s *mCacheService) mSetToHash(ctx context.Context, key string, fields map[string]interface{}) error {
+	_, err := s.rds.HMSet(key, fields).Result()
+	return err
 }
 
 // get 从缓存中获取后，根据第一个值来判断是否需要直接返回结果

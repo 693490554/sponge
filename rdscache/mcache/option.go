@@ -49,3 +49,27 @@ func WithHotKeyOption(option *common.HotKeyOption) MCOptionWrap {
 		o.hotKeyOption = option
 	}
 }
+
+// MGetOption 批量获取时的可选参数
+type MGetOption struct {
+	needCacheNoData bool
+}
+
+func NewMGetOption(opts ...MGetOptionWrap) *MGetOption {
+	ret := &MGetOption{}
+	for _, op := range opts {
+		if op == nil {
+			continue
+		}
+		op(ret)
+	}
+	return ret
+}
+
+type MGetOptionWrap func(o *MGetOption)
+
+func WithMGetNeedCacheNoData() MGetOptionWrap {
+	return func(o *MGetOption) {
+		o.needCacheNoData = true
+	}
+}
