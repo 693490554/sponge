@@ -464,7 +464,7 @@ func (m *TestMGetStringModel) UnMarshal(value string) error {
 	return json.UnmarshalFromString(value, m)
 }
 
-func (m *TestMGetStringModel) UpdateSelf(model IMultiCacheModel) {
+func (m *TestMGetStringModel) UpdateSelf(model ICanMGetModel) {
 	// nil代表没有数据，需特殊处理，例如可以将数据库主键设为0，代表没有数据
 	if model == nil {
 		m.A = 0
@@ -497,7 +497,7 @@ func (m *TestMGetHashModel) UnMarshal(value string) error {
 	return json.UnmarshalFromString(value, m)
 }
 
-func (m *TestMGetHashModel) UpdateSelf(model IMultiCacheModel) {
+func (m *TestMGetHashModel) UpdateSelf(model ICanMGetModel) {
 	// nil代表没有数据，需特殊处理
 	if model == nil {
 		m.A = 0
@@ -530,7 +530,7 @@ func (m *TestMGetStringModelUnMarshalFail) UnMarshal(value string) error {
 	return errors.New("反序列化失败")
 }
 
-func (m *TestMGetStringModelUnMarshalFail) UpdateSelf(model IMultiCacheModel) {
+func (m *TestMGetStringModelUnMarshalFail) UpdateSelf(model ICanMGetModel) {
 	// nil代表没有数据，需特殊处理
 	if model == nil {
 		m.A = 0
@@ -551,13 +551,13 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				m1 := &TestMGetStringModel{A: 1} // 实际在开发过程中A可能是主键或者唯一索引
 				m2 := &TestMGetStringModel{A: 2}
 				m3 := &TestMGetStringModel{A: 3}
-				models := []IMultiCacheModel{m1, m2, m3}
-				mGetOriginFunc := func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error) {
+				models := []ICanMGetModel{m1, m2, m3}
+				mGetOriginFunc := func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
 					// 实际开发过程中，这里需要将所有缓存中没找到的数据，进行回源
 					tmpM1 := &TestMGetStringModel{A: 1, B: 1}
 					tmpM2 := &TestMGetStringModel{A: 2, B: 2}
 					tmpM3 := &TestMGetStringModel{A: 3, B: 3}
-					tmpModels := []IMultiCacheModel{tmpM1, tmpM2, tmpM3}
+					tmpModels := []ICanMGetModel{tmpM1, tmpM2, tmpM3}
 					return tmpModels, nil
 				}
 				err := mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
@@ -583,7 +583,7 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				m1 = &TestMGetStringModel{A: 1}
 				m2 = &TestMGetStringModel{A: 2}
 				m3 = &TestMGetStringModel{A: 3}
-				models = []IMultiCacheModel{m1, m2, m3}
+				models = []ICanMGetModel{m1, m2, m3}
 				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
 				So(err, ShouldBeNil)
 
@@ -599,10 +599,10 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				m1 := &TestMGetStringModel{A: 1}
 				m2 := &TestMGetStringModel{A: 2}
 				m3 := &TestMGetStringModel{A: 3}
-				models := []IMultiCacheModel{m1, m2, m3}
-				mGetOriginFunc := func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error) {
+				models := []ICanMGetModel{m1, m2, m3}
+				mGetOriginFunc := func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
 					tmpM1 := &TestMGetStringModel{A: 1, B: 1}
-					tmpModels := []IMultiCacheModel{tmpM1, nil, nil}
+					tmpModels := []ICanMGetModel{tmpM1, nil, nil}
 					// 缓存中没数据时，需全部回源
 					if len(noCacheModels) == 3 {
 						return tmpModels, nil
@@ -636,7 +636,7 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				m1 = &TestMGetStringModel{A: 1}
 				m2 = &TestMGetStringModel{A: 2}
 				m3 = &TestMGetStringModel{A: 3}
-				models = []IMultiCacheModel{m1, m2, m3}
+				models = []ICanMGetModel{m1, m2, m3}
 				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
 				So(err, ShouldBeNil)
 
@@ -666,31 +666,30 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 
 				delTestData()
 				// 回源返回数据条数!=请求数据条数
-				mGetOriginFunc = func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error) {
+				mGetOriginFunc = func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
 					tmpM1 := &TestMGetStringModel{A: 1, B: 1}
-					// TODO: 数据部分不存在不可以返回nil，因为如果需要预防缓存穿透，组件还是需要拿到redis key的信息的，数据不存在特殊标记一下
-					tmpModels := []IMultiCacheModel{tmpM1}
+					tmpModels := []ICanMGetModel{tmpM1}
 					return tmpModels, nil
 				}
 				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
-				So(err, ShouldEqual, rdscache.ErrMGetFromOriReturnCntNotEqualQueryCnt)
+				So(err, ShouldEqual, rdscache.ErrMGetFromOriRetCntNotCorrect)
 			})
 
 			Convey("反序列化失败+回源报错", func() {
 				// 测试回源报错
 				m1 := &TestMGetStringModelUnMarshalFail{A: 1}
-				models := []IMultiCacheModel{m1}
+				models := []ICanMGetModel{m1}
 				tmpErr := errors.New("回源报错啦")
-				mGetOriginFunc := func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error) {
-					return []IMultiCacheModel{m1}, tmpErr
+				mGetOriginFunc := func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
+					return []ICanMGetModel{m1}, tmpErr
 				}
 				err := mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
 				So(err, ShouldEqual, tmpErr)
 
 				// 测试反序列化报错
-				mGetOriginFunc = func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error) {
+				mGetOriginFunc = func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
 					tmpM1 := &TestMGetStringModelUnMarshalFail{A: 1, B: 1}
-					tmpModels := []IMultiCacheModel{tmpM1}
+					tmpModels := []ICanMGetModel{tmpM1}
 					return tmpModels, nil
 				}
 				// 第一次拿没有走缓存，需拿两次
@@ -701,9 +700,136 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 			})
 		})
 
-		// TODO: 下面的测试用例待完成
 		Convey("从hash缓存类型中批量获取", func() {
+			delTestData()
+			Convey("回源数据全部返回, 数据均非nil", func() {
+				//  回源方法无报错
+				m1 := &TestMGetHashModel{A: 1} // 实际在开发过程中A可能是主键或者唯一索引
+				m2 := &TestMGetHashModel{A: 2}
+				m3 := &TestMGetHashModel{A: 3}
+				models := []ICanMGetModel{m1, m2, m3}
+				mGetOriginFunc := func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
+					// 实际开发过程中，这里需要将所有缓存中没找到的数据，进行回源
+					tmpM1 := &TestMGetHashModel{A: 1, B: 1}
+					tmpM2 := &TestMGetHashModel{A: 2, B: 2}
+					tmpM3 := &TestMGetHashModel{A: 3, B: 3}
+					tmpModels := []ICanMGetModel{tmpM1, tmpM2, tmpM3}
+					return tmpModels, nil
+				}
+				err := mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
+				So(err, ShouldBeNil)
 
+				// 校验缓存中数据
+				v, err := rds.HGet(m1.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m1.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldNotEqual, "")
+				v, err = rds.HGet(m2.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m2.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldNotEqual, "")
+				v, err = rds.HGet(m3.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m3.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldNotEqual, "")
+
+				// 校验数据
+				So(m1.B, ShouldEqual, 1)
+				So(m2.B, ShouldEqual, 2)
+				So(m3.B, ShouldEqual, 3)
+
+				// 再获取一次，此时会直接从缓存中获取
+				m1 = &TestMGetHashModel{A: 1}
+				m2 = &TestMGetHashModel{A: 2}
+				m3 = &TestMGetHashModel{A: 3}
+				models = []ICanMGetModel{m1, m2, m3}
+				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
+				So(err, ShouldBeNil)
+
+				// 校验数据
+				So(m1.B, ShouldEqual, 1)
+				So(m2.B, ShouldEqual, 2)
+				So(m3.B, ShouldEqual, 3)
+
+			})
+
+			Convey("回源数据部分不存在", func() {
+
+				m1 := &TestMGetHashModel{A: 1}
+				m2 := &TestMGetHashModel{A: 2}
+				m3 := &TestMGetHashModel{A: 3}
+				models := []ICanMGetModel{m1, m2, m3}
+				mGetOriginFunc := func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
+					tmpM1 := &TestMGetHashModel{A: 1, B: 1}
+					tmpModels := []ICanMGetModel{tmpM1, nil, nil}
+					// 缓存中没数据时，需全部回源
+					if len(noCacheModels) == 3 {
+						return tmpModels, nil
+					}
+					if len(noCacheModels) == 2 {
+						// 第二次查询时，缓存中第一个数据已经有了，仅后面两个回源
+						return tmpModels[1:], nil
+					}
+					return nil, nil
+				}
+				err := mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
+				So(err, ShouldBeNil)
+
+				// 校验缓存中数据
+				v, err := rds.HGet(m1.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m1.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldNotEqual, "")
+				v, err = rds.HGet(m2.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m2.A)).Result()
+				So(err, ShouldEqual, redis.Nil) // 未开启防止缓存穿透，此时不会缓存nil数据
+				So(v, ShouldEqual, "")
+				v, err = rds.HGet(m3.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m3.A)).Result()
+				So(err, ShouldEqual, redis.Nil)
+				So(v, ShouldEqual, "")
+
+				// 校验数据
+				So(m1.B, ShouldEqual, 1)
+				So(m2.A, ShouldEqual, 0)
+				So(m3.A, ShouldEqual, 0)
+
+				// 再获取一次，部分数据直接查询缓存
+				m1 = &TestMGetHashModel{A: 1}
+				m2 = &TestMGetHashModel{A: 2}
+				m3 = &TestMGetHashModel{A: 3}
+				models = []ICanMGetModel{m1, m2, m3}
+				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
+				So(err, ShouldBeNil)
+
+				// 校验数据
+				So(m1.B, ShouldEqual, 1)
+				So(m2.A, ShouldEqual, 0)
+				So(m3.A, ShouldEqual, 0)
+
+				// 再获取一次，开启防止缓存穿透，此时nil将设为空缓存
+				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc, WithMGetNeedCacheNoData())
+				So(err, ShouldBeNil)
+
+				// 校验缓存中数据
+				v, err = rds.HGet(m1.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m1.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldNotEqual, "")
+				v, err = rds.HGet(m2.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m2.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldEqual, "")
+				v, err = rds.HGet(m3.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m3.A)).Result()
+				So(err, ShouldBeNil)
+				So(v, ShouldEqual, "")
+
+				// 再获取一次，因为设了空缓存，此时数据完全来自缓存
+				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
+				So(err, ShouldBeNil)
+
+				delTestData()
+				// 回源返回数据条数!=请求数据条数
+				mGetOriginFunc = func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error) {
+					tmpM1 := &TestMGetHashModel{A: 1, B: 1}
+					tmpModels := []ICanMGetModel{tmpM1}
+					return tmpModels, nil
+				}
+				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
+				So(err, ShouldEqual, rdscache.ErrMGetFromOriRetCntNotCorrect)
+			})
 		})
 	})
 }

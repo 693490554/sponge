@@ -9,5 +9,5 @@ var (
 	ErrHotKeyOptionInitFail      = errors.New("init error, please check your parameter") // 预防热key的方式均为nil
 	ErrMGetHaveSomeUnMarshalFail = errors.New(                                           // 批量获取缓存数据时，如果有其中一些数据反序列化失败，则报该错误
 		"some value is not correct, so unmarshal fail, " + "you can check log get some info")
-	ErrMGetFromOriReturnCntNotEqualQueryCnt = errors.New("mget from origin return cnt not equal query cnt") // 回源返回数据数量必须等于请求数据数量
+	ErrMGetFromOriRetCntNotCorrect = errors.New("mget from origin return cnt not equal query cnt") // 回源返回数据数量必须等于请求数据数量
 )

@@ -25,14 +25,15 @@ sponge直译为海绵，让人联想到缓存的特性。该项目是在golang�
 # 功能简介
  - rdscache
    - 函数缓存
-     - 缓存函数的返回结果
+     - 从缓存中获取函数的返回结果
      - 支持预防缓存穿透
      - 支持预防缓存击穿
      - 支持注册访问redis函数回调, 业务层可实现热点key的动态判断或监控等功能
      - 支持热点key处理
      - 支持通过注册的函数用于判断key是否是热key, 可扩展用于动态热点key处理
    - model缓存
-     - 缓存某一个对象
+     - 从缓存中获取某一个对象
+     - 从缓存中批量获取多个对象
      - 同上函数缓存, 支持预防缓存穿透及击穿,及热key处理
  
 ## func缓存使用
@@ -147,51 +148,67 @@ func main() {
 package main
 
 import (
-	"context"
-	"fmt"
-	"sync"
-	"time"
+    "context"
+    "fmt"
+    "sync"  
+    "time"
 
-	"github.com/693490554/sponge/rdscache"
-	"github.com/693490554/sponge/rdscache/mcache"
-	"github.com/693490554/sponge/rdscache/common"
-	"github.com/go-redis/redis"
-	jsoniter "github.com/json-iterator/go"
+
+    "github.com/693490554/sponge/rdscache"
+    "github.com/693490554/sponge/rdscache/common"
+    "github.com/693490554/sponge/rdscache/mcache"
+    "github.com/go-redis/redis"
+    jsoniter "github.com/json-iterator/go"
 )
 
 var rds = redis.NewClient(&redis.Options{
-	Addr: "localhost:6379",
+    Addr: "localhost:6379",
 })
 var ctx = context.Background()
 var lock sync.Locker = &sync.Mutex{}
 
 type User struct {
-	UserId uint64
-	Name   string
-	Age    uint8
+    Id     uint64 // 数据唯一id
+    UserId uint64
+    Name   string
+    Age    uint8
 }
 
+// TODO: 如果需要通过组件从缓存中获取单个model对象，需要实现了ICacheModel接口
+// TODO: 如果需要通过组件批量获取model，需要实现ICanMGetModel接口
 // CacheInfo 获取缓存信息, 根据业务方的需要可缓存至string or hash中
 func (u *User) CacheInfo() common.ICacheInfo {
-	//return common.NewHashCache("userCache", strconv.FormatUint(u.UserId, 10), time.Second*10)
-	return common.NewStringCache(fmt.Sprintf("userCache:uid:%d", u.UserId), time.Second*10)
+    //return common.NewHashCache("userCache", strconv.FormatUint(u.UserId, 10), time.Second*10)
+    return common.NewStringCache(fmt.Sprintf("userCache:uid:%d", u.UserId), time.Second*10)
 }
 
 // Marshal model提供序列化方法，缓存中缓存的是序列化后的结果
 func (u *User) Marshal() (string, error) {
-	return jsoniter.MarshalToString(u)
+    return jsoniter.MarshalToString(u)
 }
 
 // UnMarshal model提供反序列化方法，从缓存中拿到value后反序列化到自身
 func (u *User) UnMarshal(value string) error {
-	return jsoniter.UnmarshalFromString(value, u)
+    return jsoniter.UnmarshalFromString(value, u)
 }
 
 // GetOri 获取原始数据方法，可以是从mysql等数据库中获取数据
-// 如果数据不存在需要返回ErrNoData错误，供组件捕获到用于预防缓存穿透
+// 如果数据不存在需要返回ErrNoData错误，供组件捕获并用于预防缓存穿透
 func (u *User) GetOri() (mcache.ICacheModel, error) {
-	// 可以根据UserId从db中查询出User
-	return nil, rdscache.ErrNoData
+    // 可以根据UserId从db中查询出User
+    // todo: model可以是聚合model或者是其它的复杂对象，即一个model的属性可能来自不同的表
+    return nil, rdscache.ErrNoData
+}
+
+func (u *User) UpdateSelf(model mcache.ICanMGetModel) {
+    // nil代表没有数据，可以将唯一id标为0代表数据不存在。
+    if model == nil {
+        u.Id = 0
+        return
+    }
+    if tmpModel, ok := model.(*User); ok {
+        *u = *tmpModel
+    }
 }
 
 func GetUserWithCache(ctx context.Context, userId uint64) (*User, error) {
@@ -203,23 +220,67 @@ func GetUserWithCache(ctx context.Context, userId uint64) (*User, error) {
     // 如果存在缓存，获取到的结果将通过组件直接反序列化到user中
     // todo 和func缓存一样，也同样支持热key处理
     err := svc.GetOrCreate(
-    	ctx, user,
-    	// 可选项，预防缓存击穿，需注意lock和需要预防缓存击穿的函数为一一对应的关系，lock为单例，同一个lock不可用于多个需要预防缓存穿透的地方
-    	mcache.WithLock(lock),
-    	mcache.WithNeedCacheNoData()) // 可选项，当数据不存在时也需要缓存下来，防止缓存穿透，此时缓存的中记录的是空字符串
+        ctx, user,
+        // 可选项，预防缓存击穿，需注意lock和需要预防缓存击穿的函数为一一对应的关系，lock为单例，同一个lock不可用于多个需要预防缓存穿透的地方
+        mcache.WithLock(lock),
+        mcache.WithNeedCacheNoData()) // 可选项，当数据不存在时也需要缓存下来，防止缓存穿透，此时缓存的中记录的是空字符串
     
     if err != nil {
-    	// 数据不存在可以按业务需求决定是否返回error
-    	if err == rdscache.ErrNoData {
-    		return nil, nil
-    	}
+        // 数据不存在可以按业务需求决定是否返回error
+        if err == rdscache.ErrNoData {
+            return nil, nil
+        }
     }
     return user, nil
 }
 
+// MGetUserWithCache 从缓存中批量获取User信息
+func MGetUserWithCache(ctx context.Context, userIds []uint64) ([]*User, error) {
+    // rds为nil时，缓存组件无法使用，业务方需保证rds可用
+    svc := mcache.NewModelCacheSvc(rds)
+    var models []mcache.ICanMGetModel
+    
+    // 构造需要获取的models
+    for _, userId := range userIds{
+        models = append(models, &User{UserId: userId})
+    }
+    
+    // 缓存数据不存在时，会调用回源函数查询数据，业务方根据业务场景自行实现回源方法
+    mGetFromOriFunc := func(ctx context.Context, noCacheModels []mcache.ICanMGetModel) ([]mcache.ICanMGetModel, error){
+        // TODO: 数据不存在时需要返回nil, 返回的结果的个数需要和noCacheModels数量保持一致否则会报错，并且对应的index也需要一致
+    	// 例如回源查询5条数据，第2条和第5条数据不存在，则需对应返回nil，如下一行代码
+    	// return []mcache.ICanMGetModel{User{UserId: 1}, nil, User{UserId: 3}, User{UserId: 4}, nil}
+    	return nil, nil
+    }
+
+    // 获取到的结果将直接保存到models中
+    err := svc.MGetOrCreate(
+    	ctx, models, mGetFromOriFunc,
+    	// 可选项，预防缓存击穿，需注意lock和需要预防缓存击穿的函数为一一对应的关系，lock为单例，同一个lock不可用于多个需要预防缓存穿透的地方
+    	mcache.WithMGetNeedCacheNoData()) // 可选项，当数据不存在时也需要缓存下来，防止缓存穿透，此时缓存的中记录的是空字符串
+    
+    if err != nil {
+    	// TODO: 如果存在部分脏数据，可能会导致部分数据反序列化失败, 此时会抛出ErrMGetHaveSomeUnMarshalFail错误
+        // 这种情况下可能只能拿到部分正确的数据，反序列化失败的数据将获取失败，业务方根据需要可考虑是否将该错误抛出
+    	if err == rdscache.ErrMGetHaveSomeUnMarshalFail {
+    		return nil, err
+    	}
+    }
+
+    // interface->User
+    var users []*User
+    for _, m := range models{
+        users = append(users, m.(*User))
+    }
+    return users, nil
+}
+
 func main() {
-	user, err := GetUserWithCache(ctx, 123)
-	fmt.Println(user, err)
+    user, err := GetUserWithCache(ctx, 123) // 从缓存中查询当个用户数据
+    fmt.Println(user, err)
+    
+    users, err := MGetUserWithCache(ctx, []uint64{123, 456, 789}) // 从缓存中批量查询用户信息
+    fmt.Println(users, err)
 }
 
 ```

@@ -86,8 +86,8 @@ func (s *mCacheService) Set(
 // todo-未来功能: 后续将支持使用本地缓存解决热key(一批数据中，可能部分数据是热数据，需要从本地缓存中获取)。
 // TODO-使用注意事项: mGetFromOriFunc-批量回源查询时，建议如果某条数据不存在时返回nil，即查X条返回X条(其中不存在的为nil)
 func (s *mCacheService) MGetOrCreate(
-	ctx context.Context, models []IMultiCacheModel,
-	mGetFromOriFunc func(ctx context.Context, noCacheModels []IMultiCacheModel) ([]IMultiCacheModel, error),
+	ctx context.Context, models []ICanMGetModel,
+	mGetFromOriFunc func(ctx context.Context, noCacheModels []ICanMGetModel) ([]ICanMGetModel, error),
 	optionWraps ...MGetOptionWrap) error {
 
 	if len(models) == 0 {
@@ -108,7 +108,7 @@ func (s *mCacheService) MGetOrCreate(
 
 	// 获取从缓存中没有找到的数据
 	var unMarshalErr error
-	var noCacheModels []IMultiCacheModel
+	var noCacheModels []ICanMGetModel
 	var noCacheModelsIdxs []int
 	for idx, v := range cacheValues {
 		if v != nil {
@@ -133,7 +133,7 @@ func (s *mCacheService) MGetOrCreate(
 	originModels, err := mGetFromOriFunc(ctx, noCacheModels)
 	// TODO：回源方法必须返回全部数据, 例如获取三个缓存中不存在的数据，必须返回三个回源数据, 不存在的数据需返回nil
 	if len(noCacheModels) != len(originModels) {
-		return rdscache.ErrMGetFromOriReturnCntNotEqualQueryCnt
+		return rdscache.ErrMGetFromOriRetCntNotCorrect
 	}
 	if err != nil {
 		return err
@@ -192,14 +192,14 @@ func (s *mCacheService) mGetFromHash(ctx context.Context, key string, subKeys []
 
 // mSet 批量设置缓存
 func (s *mCacheService) mSet(
-	ctx context.Context, oriModels, noCacheModels []IMultiCacheModel,
+	ctx context.Context, oriModels, noCacheModels []ICanMGetModel,
 	option *MGetOption) error {
 	return s.mSetToRds(ctx, oriModels, noCacheModels, option)
 }
 
 // mGetFromRds 从redis中批量获取
 func (s *mCacheService) mSetToRds(
-	ctx context.Context, oriModels, noCacheModels []IMultiCacheModel,
+	ctx context.Context, oriModels, noCacheModels []ICanMGetModel,
 	option *MGetOption) error {
 
 	switch noCacheModels[0].CacheInfo().(type) {

@@ -4,7 +4,7 @@ import (
 	"github.com/693490554/sponge/rdscache/common"
 )
 
-// ICacheModel 可缓存的model接口
+// ICacheModel 通过组件可以获取到的单个model的抽象
 type ICacheModel interface {
 	// 缓存信息
 	CacheInfo() common.ICacheInfo
@@ -17,8 +17,8 @@ type ICacheModel interface {
 	GetOri() (ICacheModel, error)
 }
 
-// IMultiCacheModel 一对多缓存对象接口
-type IMultiCacheModel interface {
+// ICanMGetModel 通过组件可以批量获取的单个model的抽象
+type ICanMGetModel interface {
 	// CacheInfo 缓存信息
 	// TODO: 如果使用hash作为缓存，批量获取时，需保证hash的key一致，暂不支持从多个hash的key中获取数据
 	CacheInfo() common.ICacheInfo
@@ -26,6 +26,6 @@ type IMultiCacheModel interface {
 	Marshal() (string, error)
 	// model反序列化反方, 将缓存的内容反序列化到model中
 	UnMarshal(value string) error
-	// UpdateSelf 通过接口更新自身, model == nil代表数据不存在，以方法形式代替反射操作，提高性能
-	UpdateSelf(model IMultiCacheModel)
+	// UpdateSelf 通过接口更新自身, model == nil代表数据不存在，以方法形式提供对本身的更新操作，代替使用反射操作，提高性能
+	UpdateSelf(model ICanMGetModel)
 }
