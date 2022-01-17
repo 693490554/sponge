@@ -30,10 +30,10 @@ func (c *StringCache) UpdateCacheKey(key string) {
 	c.Key = key
 }
 
-func NewStringCache(Key string, ExpTime time.Duration) *StringCache {
+func NewStringCache(key string, expTime time.Duration) *StringCache {
 	base := CacheBase{
-		Key:     Key,
-		ExpTime: ExpTime,
+		Key:     key,
+		ExpTime: expTime,
 	}
 	CheckCacheBase(base)
 	return &StringCache{
@@ -54,15 +54,28 @@ func (c *HashCache) UpdateCacheKey(key string) {
 	c.Key = key
 }
 
-func NewHashCache(Key, SubKey string, ExpTime time.Duration) *HashCache {
+func NewHashCache(key, subKey string, expTime time.Duration) *HashCache {
 	base := CacheBase{
-		Key:     Key,
-		ExpTime: ExpTime,
+		Key:     key,
+		ExpTime: expTime,
 	}
 	CheckCacheBase(base)
-	CheckHashSubKey(SubKey)
+	CheckHashSubKey(subKey)
 	return &HashCache{
 		CacheBase: base,
-		SubKey:    SubKey,
+		SubKey:    subKey,
+	}
+}
+
+// MSetModel 批量设置string缓存时的对象信息
+type MSetModel struct {
+	*StringCache
+	Value string
+}
+
+func NewMSetModel(key, value string, expTime time.Duration) *MSetModel {
+	return &MSetModel{
+		StringCache: NewStringCache(key, expTime),
+		Value:       value,
 	}
 }

@@ -30,6 +30,7 @@ var (
 	subKey          = "subKey"
 	lock            = &sync.Mutex{}
 	expTime         = time.Duration(0)
+	mGetExpTime     = time.Second * 3
 	testModelAValue = 1
 )
 
@@ -448,7 +449,7 @@ type TestMGetStringModel struct {
 }
 
 func (m *TestMGetStringModel) CacheInfo() common.ICacheInfo {
-	return common.NewStringCache(fmt.Sprintf(keyForMGet, m.A), expTime)
+	return common.NewStringCache(fmt.Sprintf(keyForMGet, m.A), mGetExpTime)
 }
 
 func (m *TestMGetStringModel) Marshal() (string, error) {
@@ -475,13 +476,20 @@ func (m *TestMGetStringModel) UpdateSelf(model ICanMGetModel) {
 	}
 }
 
+func (m *TestMGetStringModel) Clone() ICanMGetModel {
+	return &TestMGetStringModel{
+		A: m.A,
+		B: m.B,
+	}
+}
+
 type TestMGetHashModel struct {
 	A int `json:"a"`
 	B int `json:"b"`
 }
 
 func (m *TestMGetHashModel) CacheInfo() common.ICacheInfo {
-	return common.NewHashCache(key, fmt.Sprintf(keyForMGet, m.A), expTime)
+	return common.NewHashCache(key, fmt.Sprintf(keyForMGet, m.A), mGetExpTime)
 }
 
 func (m *TestMGetHashModel) Marshal() (string, error) {
@@ -508,6 +516,13 @@ func (m *TestMGetHashModel) UpdateSelf(model ICanMGetModel) {
 	}
 }
 
+func (m *TestMGetHashModel) Clone() ICanMGetModel {
+	return &TestMGetHashModel{
+		A: m.A,
+		B: m.B,
+	}
+}
+
 // TestMGetStringModelUnMarshalFail 测试反序列化失败场景
 type TestMGetStringModelUnMarshalFail struct {
 	A int `json:"a"`
@@ -515,7 +530,7 @@ type TestMGetStringModelUnMarshalFail struct {
 }
 
 func (m *TestMGetStringModelUnMarshalFail) CacheInfo() common.ICacheInfo {
-	return common.NewStringCache(fmt.Sprintf(keyForMGet, m.A), expTime)
+	return common.NewStringCache(fmt.Sprintf(keyForMGet, m.A), mGetExpTime)
 }
 
 func (m *TestMGetStringModelUnMarshalFail) Marshal() (string, error) {
@@ -538,6 +553,13 @@ func (m *TestMGetStringModelUnMarshalFail) UpdateSelf(model ICanMGetModel) {
 	}
 	if tmpModel, ok := model.(*TestMGetStringModelUnMarshalFail); ok {
 		*m = *tmpModel
+	}
+}
+
+func (m *TestMGetStringModelUnMarshalFail) Clone() ICanMGetModel {
+	return &TestMGetStringModelUnMarshalFail{
+		A: m.A,
+		B: m.B,
 	}
 }
 
@@ -567,12 +589,21 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				v, err := rds.Get(m1.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err := rds.TTL(m1.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.Get(m2.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err = rds.TTL(m2.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.Get(m3.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err = rds.TTL(m3.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 
 				// 校验数据
 				So(m1.B, ShouldEqual, 1)
@@ -620,6 +651,9 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				v, err := rds.Get(m1.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err := rds.TTL(m1.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.Get(m2.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldEqual, redis.Nil) // 未开启防止缓存穿透，此时不会缓存nil数据
 				So(v, ShouldEqual, "")
@@ -653,12 +687,21 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				v, err = rds.Get(m1.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err = rds.TTL(m1.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.Get(m2.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldEqual, "")
+				dur, err = rds.TTL(m2.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.Get(m3.CacheInfo().BaseInfo().Key).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldEqual, "")
+				dur, err = rds.TTL(m3.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 
 				// 再获取一次，因为设了空缓存，此时数据完全来自缓存
 				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)
@@ -723,12 +766,21 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				v, err := rds.HGet(m1.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m1.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err := rds.TTL(m1.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.HGet(m2.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m2.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err = rds.TTL(m2.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.HGet(m3.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m3.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err = rds.TTL(m3.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 
 				// 校验数据
 				So(m1.B, ShouldEqual, 1)
@@ -776,6 +828,9 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				v, err := rds.HGet(m1.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m1.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err := rds.TTL(m1.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.HGet(m2.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m2.A)).Result()
 				So(err, ShouldEqual, redis.Nil) // 未开启防止缓存穿透，此时不会缓存nil数据
 				So(v, ShouldEqual, "")
@@ -809,12 +864,21 @@ func Test_mCacheService_MGetOrCreate(t *testing.T) {
 				v, err = rds.HGet(m1.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m1.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldNotEqual, "")
+				dur, err = rds.TTL(m1.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.HGet(m2.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m2.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldEqual, "")
+				dur, err = rds.TTL(m2.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 				v, err = rds.HGet(m3.CacheInfo().BaseInfo().Key, fmt.Sprintf(keyForMGet, m3.A)).Result()
 				So(err, ShouldBeNil)
 				So(v, ShouldEqual, "")
+				dur, err = rds.TTL(m3.CacheInfo().BaseInfo().Key).Result()
+				So(err, ShouldBeNil)
+				So(dur, ShouldBeGreaterThan, 0)
 
 				// 再获取一次，因为设了空缓存，此时数据完全来自缓存
 				err = mcSvc.MGetOrCreate(ctx, models, mGetOriginFunc)

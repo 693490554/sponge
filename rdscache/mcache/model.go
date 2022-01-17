@@ -28,4 +28,6 @@ type ICanMGetModel interface {
 	UnMarshal(value string) error
 	// UpdateSelf 通过接口更新自身, model == nil代表数据不存在，以方法形式提供对本身的更新操作，代替使用反射操作，提高性能
 	UpdateSelf(model ICanMGetModel)
+	// Clone 深拷贝方法
+	Clone() ICanMGetModel
 }

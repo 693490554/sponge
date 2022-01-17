@@ -119,7 +119,7 @@ func (s *mCacheService) MGetOrCreate(
 				fmt.Println("MGet UnMarshal fail ", models[idx])
 			}
 		} else { // 缓存中无数据
-			noCacheModels = append(noCacheModels, models[idx])
+			noCacheModels = append(noCacheModels, models[idx].Clone())
 			noCacheModelsIdxs = append(noCacheModelsIdxs, idx)
 		}
 	}
@@ -204,7 +204,7 @@ func (s *mCacheService) mSetToRds(
 
 	switch noCacheModels[0].CacheInfo().(type) {
 	case *common.StringCache:
-		var pairs []interface{}
+		var mSetModels []*common.MSetModel
 		for idx, model := range oriModels {
 			var v string
 			var err error
@@ -220,14 +220,18 @@ func (s *mCacheService) mSetToRds(
 					return err
 				}
 			}
-			// 回源数据如果不存在，会返回nil，如果需要缓存nil，此时通过model是拿不到CacheInfo()的, 所以需要从对应的没有缓存的models中获取
-			pairs = append(pairs, noCacheModels[idx].CacheInfo().BaseInfo().Key, v)
+			// 回源数据如果不存在，会返回nil并且会设置到对应的oriModels中，这个时候一些原始信息可能已经改变了
+			// 此时通过oriModels可能拿不到正确的CacheInfo(), 所以需要从对应的没有缓存的noCacheModels(Clone自oriModels)中获取缓存信息
+			mSetModels = append(
+				mSetModels, common.NewMSetModel(
+					noCacheModels[idx].CacheInfo().BaseInfo().Key, v,
+					noCacheModels[idx].CacheInfo().BaseInfo().ExpTime))
 		}
 
-		if len(pairs) == 0 {
+		if len(mSetModels) == 0 {
 			return nil
 		}
-		return s.mSetToString(ctx, pairs)
+		return s.mSetToString(ctx, mSetModels)
 	case *common.HashCache:
 		fields := map[string]interface{}{}
 		for idx, model := range oriModels {
@@ -250,19 +254,37 @@ func (s *mCacheService) mSetToRds(
 		if len(fields) == 0 {
 			return nil
 		}
-		return s.mSetToHash(ctx, noCacheModels[0].CacheInfo().BaseInfo().Key, fields)
+		return s.mSetToHash(
+			ctx, noCacheModels[0].CacheInfo().BaseInfo().Key, fields, noCacheModels[0].CacheInfo().BaseInfo().ExpTime)
 	default:
 		return errors.New("unknown KT")
 	}
 }
 
-func (s *mCacheService) mSetToString(ctx context.Context, paris []interface{}) error {
-	_, err := s.rds.MSet(paris...).Result()
+func (s *mCacheService) mSetToString(ctx context.Context, models []*common.MSetModel) error {
+	p := s.rds.Pipeline()
+	defer func() { _ = p.Close() }()
+
+	var pairs []interface{}
+	for _, model := range models {
+		pairs = append(pairs, model.Key, model.Value)
+	}
+	p.MSet(pairs...)
+
+	for _, model := range models {
+		p.Expire(model.Key, model.ExpTime)
+	}
+	_, err := p.Exec()
 	return err
 }
 
-func (s *mCacheService) mSetToHash(ctx context.Context, key string, fields map[string]interface{}) error {
-	_, err := s.rds.HMSet(key, fields).Result()
+func (s *mCacheService) mSetToHash(
+	ctx context.Context, key string, fields map[string]interface{}, expTime time.Duration) error {
+	p := s.rds.Pipeline()
+	defer func() { _ = p.Close() }()
+	p.HMSet(key, fields)
+	p.Expire(key, expTime)
+	_, err := p.Exec()
 	return err
 }
 
