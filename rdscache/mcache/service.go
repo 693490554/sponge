@@ -111,7 +111,7 @@ func (s *mCacheService) MGetOrCreate(
 	var noCacheModels []ICanMGetModel
 	var noCacheModelsIdxs []int
 	for idx, v := range cacheValues {
-		if v != nil {
+		if v != nil && v != common.CacheEmptyValue {
 			err = models[idx].UnMarshal(v.(string))
 			// 可能是脏数据或者其它原因导致反序列化失败，这种情况打个错误日志，并返回特殊错误
 			if err != nil {
@@ -304,7 +304,7 @@ func (s *mCacheService) get(
 			// 存在数据
 			if err == nil {
 				// 缓存了空直接返回
-				if res == "" {
+				if res == common.CacheEmptyValue {
 					err = rdscache.ErrNoData
 				} else {
 					err = model.UnMarshal(res)
@@ -337,7 +337,7 @@ func (s *mCacheService) get(
 		}
 	} else {
 		// 缓存结果不为空
-		if res != "" {
+		if res != common.CacheEmptyValue {
 			err = model.UnMarshal(res)
 		} else {
 			err = rdscache.ErrNoData

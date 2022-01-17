@@ -2,6 +2,8 @@ package common
 
 import "time"
 
+var CacheEmptyValue = "" // 空缓存值
+
 type ICacheInfo interface {
 	BaseInfo() CacheBase
 	UpdateCacheKey(key string)

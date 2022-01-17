@@ -110,7 +110,7 @@ func (s *fCacheService) get(ctx context.Context, cacheInfo common.ICacheInfo, op
 			// 存在数据(不存在数据时会报错，如果没有错误缓存中肯定是存在数据的)
 			if err == nil {
 				// 缓存了空直接返回
-				if res == "" {
+				if res == common.CacheEmptyValue {
 					err = rdscache.ErrNoData
 				} else {
 					if option.data != nil {
@@ -145,7 +145,7 @@ func (s *fCacheService) get(ctx context.Context, cacheInfo common.ICacheInfo, op
 		}
 	} else {
 		// 缓存了空返回无数据异常
-		if res == "" {
+		if res == common.CacheEmptyValue {
 			err = rdscache.ErrNoData
 		} else {
 			if option.data != nil {
