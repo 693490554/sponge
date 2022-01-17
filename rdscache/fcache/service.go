@@ -64,7 +64,7 @@ func (s *fCacheService) GetOrCreate(
 
 	// 不需要缓存无数据
 	if noDataErr != nil && !options.needCacheNoData {
-		return "", noDataErr
+		return common.CacheEmptyValue, noDataErr
 	}
 	var cacheStr string
 	// 数据存在,将函数返回结果进行序列化; 数据如果不存在,则缓存空字符串
