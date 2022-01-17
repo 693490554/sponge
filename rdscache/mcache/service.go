@@ -111,7 +111,10 @@ func (s *mCacheService) MGetOrCreate(
 	var noCacheModels []ICanMGetModel
 	var noCacheModelsIdxs []int
 	for idx, v := range cacheValues {
-		if v != nil && v != common.CacheEmptyValue {
+		// 缓存了空，无需反序列化, 无需回源(防止缓存穿透)
+		if v == common.CacheEmptyValue {
+			continue
+		} else if v != nil && v != common.CacheEmptyValue {
 			err = models[idx].UnMarshal(v.(string))
 			// 可能是脏数据或者其它原因导致反序列化失败，这种情况打个错误日志，并返回特殊错误
 			if err != nil {
