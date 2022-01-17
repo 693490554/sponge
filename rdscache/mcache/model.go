@@ -25,6 +25,7 @@ type ICanMGetModel interface {
 	// model序列化方法，通过该方法可以获取到缓存的内容
 	Marshal() (string, error)
 	// model反序列化反方, 将缓存的内容反序列化到model中
+	// TODO value=""代表缓存了空数据，此时反序列化后续特殊标示下
 	UnMarshal(value string) error
 	// UpdateSelf 通过接口更新自身, model == nil代表数据不存在，以方法形式提供对本身的更新操作，代替使用反射操作，提高性能
 	UpdateSelf(model ICanMGetModel)
