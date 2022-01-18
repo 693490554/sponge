@@ -206,10 +206,20 @@ func (u *User) UpdateSelf(model mcache.ICanMGetModel) {
         u.Id = 0
         return
     }
+
     if tmpModel, ok := model.(*User); ok {
-        *u = *tmpModel
+        if tmpModel == nil{
+            u.Id = 0
+        }else{
+            *u = *tmpModel
+        }
     }
 }
+
+func (u *User) Clone() mcache.ICanMGetModel {
+   return &User{Id: u.Id, UserId: u.UserId, Name:u.Name, Age:u.Age}
+}
+
 
 func GetUserWithCache(ctx context.Context, userId uint64) (*User, error) {
     // rds为nil时，缓存组件无法使用，业务方需保证rds可用
